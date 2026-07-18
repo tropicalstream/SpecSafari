@@ -36,6 +36,7 @@ class DenActivity : Activity() {
     private val cardBg = Color.rgb(20, 31, 44)
 
     private lateinit var glView: GLSurfaceView
+    private lateinit var stick: StickView
     private val renderer = DenRenderer()
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var prefs: android.content.SharedPreferences
@@ -115,34 +116,85 @@ class DenActivity : Activity() {
 
         val habitat = prefs.getInt("habitat", 0)
         renderer.configure(population(), habitat, placedFor(habitat))
-        renderer.camX = 2.5f
+        renderer.resetCamera()
 
         glView = GLSurfaceView(this).apply {
             setEGLContextClientVersion(2)
             setRenderer(renderer)
         }
 
-        // Thumb physics: horizontal drag scrolls the diorama, a still tap pets.
-        var downX = 0f; var downY = 0f; var dragging = false; var lastX = 0f
+        // Minecraft manners: a floating joystick under the left thumb walks,
+        // the right thumb drags to look around, and a still tap pets.
+        stick = StickView(this)
+        var movePid = -1; var lookPid = -1
+        var moveOx = 0f; var moveOy = 0f
+        var moveDownAt = 0L; var moveMoved = false
+        var lookLastX = 0f; var lookLastY = 0f
+        var lookDownX = 0f; var lookDownY = 0f; var lookDownAt = 0L; var lookMoved = false
+        val stickRadius = dp(64).toFloat()
         glView.setOnTouchListener { v, e ->
             when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { downX = e.x; downY = e.y; lastX = e.x; dragging = false }
-                MotionEvent.ACTION_MOVE -> {
-                    if (abs(e.x - downX) > 24f) dragging = true
-                    if (dragging) {
-                        val worldPerPx = renderer.halfVisibleW * 2f / v.width
-                        renderer.camX = (renderer.camX - (e.x - lastX) * worldPerPx)
-                            .coerceIn(0f, Habitats.WORLD_W)
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                    val i = e.actionIndex; val pid = e.getPointerId(i)
+                    if (e.getX(i) < v.width / 2f && movePid < 0) {
+                        movePid = pid; moveOx = e.getX(i); moveOy = e.getY(i)
+                        moveDownAt = System.currentTimeMillis(); moveMoved = false
+                        stick.show(moveOx, moveOy, moveOx, moveOy, stickRadius)
+                    } else if (lookPid < 0) {
+                        lookPid = pid
+                        lookLastX = e.getX(i); lookLastY = e.getY(i)
+                        lookDownX = lookLastX; lookDownY = lookLastY
+                        lookDownAt = System.currentTimeMillis(); lookMoved = false
                     }
-                    lastX = e.x
                 }
-                MotionEvent.ACTION_UP -> if (!dragging && abs(e.y - downY) < 30f) onTap(e.x, e.y)
+                MotionEvent.ACTION_MOVE -> {
+                    for (i in 0 until e.pointerCount) {
+                        when (e.getPointerId(i)) {
+                            movePid -> {
+                                var dx = (e.getX(i) - moveOx) / stickRadius
+                                var dy = (e.getY(i) - moveOy) / stickRadius
+                                val len = kotlin.math.sqrt(dx * dx + dy * dy)
+                                if (len > 1f) { dx /= len; dy /= len }
+                                if (abs(e.getX(i) - moveOx) > 24f ||
+                                    abs(e.getY(i) - moveOy) > 24f) moveMoved = true
+                                renderer.setMove(dx, -dy)   // screen-up = forward
+                                stick.show(moveOx, moveOy,
+                                    moveOx + dx * stickRadius, moveOy + dy * stickRadius, stickRadius)
+                            }
+                            lookPid -> {
+                                val dx = e.getX(i) - lookLastX; val dy = e.getY(i) - lookLastY
+                                if (abs(e.getX(i) - lookDownX) > 24f ||
+                                    abs(e.getY(i) - lookDownY) > 24f) lookMoved = true
+                                renderer.look(-dx * 0.22f, -dy * 0.18f)
+                                lookLastX = e.getX(i); lookLastY = e.getY(i)
+                            }
+                        }
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
+                    val pid = e.getPointerId(e.actionIndex)
+                    if (pid == movePid) {
+                        movePid = -1; renderer.setMove(0f, 0f); stick.hide()
+                        // A still left-thumb tap is a pet, not a walk.
+                        if (!moveMoved && System.currentTimeMillis() - moveDownAt < 350L)
+                            onTap(moveOx, moveOy)
+                    }
+                    if (pid == lookPid) {
+                        if (!lookMoved && System.currentTimeMillis() - lookDownAt < 350L)
+                            onTap(e.getX(e.actionIndex), e.getY(e.actionIndex))
+                        lookPid = -1
+                    }
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    movePid = -1; lookPid = -1; renderer.setMove(0f, 0f); stick.hide()
+                }
             }
             true
         }
 
         val root = FrameLayout(this)
         root.addView(glView)
+        root.addView(stick)
         root.addView(overlayUi())
         setContentView(root)
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -352,7 +404,7 @@ class DenActivity : Activity() {
         if (c == null) {
             infoName?.text = if (renderer.creatures.isEmpty())
                 "The den is empty — catch creatures on the glasses first." else
-                "Tap a creature to pet it. Drag to stroll."
+                "Left thumb walks · right thumb looks · tap to pet."
             infoLine?.text = ""
             return
         }
@@ -371,4 +423,31 @@ class DenActivity : Activity() {
 
     override fun onResume() { super.onResume(); glView.onResume(); handler.post(poll) }
     override fun onPause() { glView.onPause(); handler.removeCallbacksAndMessages(null); super.onPause() }
+}
+
+/** The floating joystick's on-screen ghost: a ring where the thumb landed,
+ *  a puck where it is now. Not touchable — pure feedback. */
+private class StickView(ctx: Context) : View(ctx) {
+    private var active = false
+    private var ox = 0f; private var oy = 0f
+    private var tx = 0f; private var ty = 0f
+    private var radius = 100f
+    private val ring = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        style = android.graphics.Paint.Style.STROKE; strokeWidth = 4f
+        color = Color.argb(90, 255, 255, 255)
+    }
+    private val puck = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(130, 62, 224, 168)
+    }
+    init { isClickable = false }
+    fun show(originX: Float, originY: Float, thumbX: Float, thumbY: Float, r: Float) {
+        active = true; ox = originX; oy = originY; tx = thumbX; ty = thumbY; radius = r
+        invalidate()
+    }
+    fun hide() { active = false; invalidate() }
+    override fun onDraw(c: android.graphics.Canvas) {
+        if (!active) return
+        c.drawCircle(ox, oy, radius, ring)
+        c.drawCircle(tx, ty, radius * 0.38f, puck)
+    }
 }

@@ -37,9 +37,28 @@ class DenRenderer : GLSurfaceView.Renderer {
     @Volatile private var placedIds: List<String> = emptyList()
     @Volatile private var population: List<Int> = emptyList()
     @Volatile private var rebuild = true
-    @Volatile var camX = 2.5f
     @Volatile var selected = -1
-    @Volatile var halfVisibleW = 2f; private set
+
+    // First-person stroll: joystick walks, drag looks — Minecraft manners.
+    @Volatile private var camPX = 2.5f
+    @Volatile private var camPZ = 4.2f
+    private val camPY = 1.35f                 // eye height; feet on the meadow
+    @Volatile var yawDeg = 0f                 // 0 = looking into the scene (-Z)
+    @Volatile var pitchDeg = -6f
+    @Volatile private var moveX = 0f          // joystick, -1..1 (right+)
+    @Volatile private var moveY = 0f          // joystick, -1..1 (forward+)
+
+    /** Joystick vector from the UI thread; camera-relative walk. */
+    fun setMove(x: Float, y: Float) { moveX = x.coerceIn(-1f, 1f); moveY = y.coerceIn(-1f, 1f) }
+
+    fun look(dxDeg: Float, dyDeg: Float) {
+        yawDeg = (yawDeg + dxDeg) % 360f
+        pitchDeg = (pitchDeg + dyDeg).coerceIn(-55f, 40f)
+    }
+
+    fun resetCamera() {
+        camPX = 2.5f; camPZ = 4.2f; yawDeg = 0f; pitchDeg = -6f; setMove(0f, 0f)
+    }
 
     val creatures = ArrayList<DenC>()
     private val particles = ArrayList<Particle>()
@@ -105,9 +124,7 @@ class DenRenderer : GLSurfaceView.Renderer {
     override fun onSurfaceChanged(gl: GL10?, w: Int, h: Int) {
         viewW = w; viewH = h
         glViewport(0, 0, w, h)
-        val aspect = w.toFloat() / h
-        Matrix.perspectiveM(proj, 0, 50f, aspect, 0.5f, 60f)
-        halfVisibleW = (6.8f - 0f) * kotlin.math.tan(Math.toRadians(25.0)).toFloat() * aspect
+        Matrix.perspectiveM(proj, 0, 58f, w.toFloat() / h, 0.3f, 60f)
     }
 
     override fun onDrawFrame(gl: GL10?) {
@@ -119,9 +136,20 @@ class DenRenderer : GLSurfaceView.Renderer {
         if (rebuild) { rebuild = false; rebuildScene(hab) }
         step(dt, hab)
 
-        // Camera glides along the diorama.
-        val cx = camX.coerceIn(halfVisibleW * 0.9f, Habitats.WORLD_W - halfVisibleW * 0.9f)
-        Matrix.setLookAtM(view, 0, cx, 2.3f, 6.8f, cx, 0.75f, 0f, 0f, 1f, 0f)
+        // Walk the world: joystick is camera-relative, bounds keep you in the glade.
+        val yawR = Math.toRadians(yawDeg.toDouble()).toFloat()
+        val pitchR = Math.toRadians(pitchDeg.toDouble()).toFloat()
+        val fwdX = -sin(yawR); val fwdZ = -cos(yawR)
+        val rightX = cos(yawR); val rightZ = -sin(yawR)
+        val speed = 3.1f
+        camPX = (camPX + (fwdX * moveY + rightX * moveX) * speed * dt)
+            .coerceIn(0.4f, Habitats.WORLD_W - 0.4f)
+        camPZ = (camPZ + (fwdZ * moveY + rightZ * moveX) * speed * dt)
+            .coerceIn(-4.4f, 3.0f)
+        val lookX = camPX + fwdX * cos(pitchR)
+        val lookY = camPY + sin(pitchR)
+        val lookZ = camPZ + fwdZ * cos(pitchR)
+        Matrix.setLookAtM(view, 0, camPX, camPY, camPZ, lookX, lookY, lookZ, 0f, 1f, 0f)
         Matrix.multiplyMM(vp, 0, proj, 0, view, 0)
         lastVp = vp.clone()
 
@@ -145,7 +173,7 @@ class DenRenderer : GLSurfaceView.Renderer {
         val uVP = glGetUniformLocation(mainProg, "uVP")
         val uM = glGetUniformLocation(mainProg, "uM")
         glUniformMatrix4fv(uVP, 1, false, vp, 0)
-        glUniform3f(glGetUniformLocation(mainProg, "uCam"), cx, 2.3f, 6.8f)
+        glUniform3f(glGetUniformLocation(mainProg, "uCam"), camPX, camPY, camPZ)
         glUniform3f(glGetUniformLocation(mainProg, "uLight"), 0.35f, 0.8f, 0.5f)
         glUniform3f(glGetUniformLocation(mainProg, "uFog"), red(hab.fog), green(hab.fog), blue(hab.fog))
         glUniform3f(glGetUniformLocation(mainProg, "uRim"), 0.55f, 0.85f, 1f)
@@ -208,7 +236,8 @@ class DenRenderer : GLSurfaceView.Renderer {
     private fun rebuildScene(hab: HabitatDef) {
         val b = MeshBuilder()
         val w = Habitats.WORLD_W
-        b.quad(-4f, 0f, 3.5f, w + 4f, 0f, 3.5f, w + 4f, 0f, -6f, -4f, 0f, -6f, hab.ground)
+        // Big enough that a wanderer looking any direction never sees the edge.
+        b.quad(-9f, 0f, 9f, w + 9f, 0f, 9f, w + 9f, 0f, -9f, -9f, 0f, -9f, hab.ground)
         hab.decor(b, w)
         sceneMesh = b.bake()
         itemMeshes = placedIds.mapIndexedNotNull { i, id ->
