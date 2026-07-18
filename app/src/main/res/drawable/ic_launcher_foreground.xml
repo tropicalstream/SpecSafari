@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- A map pin with a creature peeking out: the hunt is on your street. -->
+    <path
+        android:fillColor="#3EE0A8"
+        android:pathData="M54,16 C38,16 26,28 26,44 C26,64 54,92 54,92 C54,92 82,64 82,44 C82,28 70,16 54,16 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,26 C43,26 35,34 35,45 C35,56 43,64 54,64 C65,64 73,56 73,45 C73,34 65,26 54,26 Z" />
+    <!-- Creature face: two ears, two eyes -->
+    <path
+        android:fillColor="#FF5ADC"
+        android:pathData="M40,38 L46,26 L50,38 Z M68,38 L62,26 L58,38 Z" />
+    <path
+        android:fillColor="#FF5ADC"
+        android:pathData="M54,32 C46,32 40,38 40,46 C40,54 46,60 54,60 C62,60 68,54 68,46 C68,38 62,32 54,32 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M46,43 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 Z M54,43 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 Z" />
+    <path
+        android:fillColor="#151030"
+        android:pathData="M48,43 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0 Z M56,43 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0 Z" />
+    <!-- Sparkles -->
+    <path
+        android:fillColor="#FFD24A"
+        android:pathData="M24,20 l3,6 l6,3 l-6,3 l-3,6 l-3,-6 l-6,-3 l6,-3 Z M84,58 l2,4 l4,2 l-4,2 l-2,4 l-2,-4 l-4,-2 l4,-2 Z" />
+</vector>
