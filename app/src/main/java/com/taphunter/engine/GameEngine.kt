@@ -27,6 +27,11 @@ class DenPet(val species: Int) {
     var pauseT = 0f         // standing around, thinking creature thoughts
     var happyT = 0f         // hearts and wiggles after affection/meetings
     var meetCd = 0f         // between social interactions
+    // The little biology: a nest spot, waking hours, sleep.
+    var homeX = 0f; var homeY = 0f
+    var awakeT = 20f
+    var sleeping = false
+    var homing = false
 }
 
 /** One caught creature in the box. */
@@ -512,11 +517,14 @@ class GameEngine(
         denPets.clear()
         // One representative of every caught species wanders in, most-bonded first.
         val species = boxLines().map { it.first }.sortedByDescending { bondPoints(it) }.take(10)
-        for (s in species) {
+        for ((i, s) in species.withIndex()) {
             denPets += DenPet(s).apply {
-                x = 40f + Random.nextFloat() * (denW - 80f)
-                y = 110f + Random.nextFloat() * (denH - 220f)
+                homeX = 50f + (denW - 100f) * ((i * 7) % 10) / 9f
+                homeY = 120f + (denH - 230f) * ((i * 3) % 5) / 4f
+                x = homeX + Random.nextFloat() * 40f - 20f
+                y = homeY + Random.nextFloat() * 40f - 20f
                 phase = Random.nextFloat() * 6f
+                awakeT = 15f + Random.nextFloat() * 30f
             }
         }
         denSel = 0
@@ -528,9 +536,33 @@ class GameEngine(
         val top = 100f; val bottom = denH - 90f
         for ((i, pet) in denPets.withIndex()) {
             val sp = Species.ALL[pet.species]
-            pet.phase += dt * (1f + sp.energy * 2f)
+            pet.phase += dt * (if (pet.sleeping) 0.2f else 1f + sp.energy * 2f)
             pet.happyT = (pet.happyT - dt).coerceAtLeast(0f)
             pet.meetCd = (pet.meetCd - dt).coerceAtLeast(0f)
+            // Bedtime: wander while awake, then home to the nest to sleep.
+            if (pet.sleeping) {
+                pet.awakeT -= dt
+                pet.vx = 0f; pet.vy = 0f
+                if (pet.awakeT <= 0f) {
+                    pet.sleeping = false
+                    pet.awakeT = (20f + Random.nextFloat() * 30f) * (0.6f + sp.energy)
+                }
+                continue
+            }
+            pet.awakeT -= dt
+            if (pet.awakeT <= 0f && !pet.homing) { pet.homing = true }
+            if (pet.homing) {
+                val dx = pet.homeX - pet.x; val dy = pet.homeY - pet.y
+                val d = kotlin.math.sqrt(dx * dx + dy * dy)
+                if (d < 10f) {
+                    pet.homing = false; pet.sleeping = true
+                    pet.awakeT = (8f + Random.nextFloat() * 8f) * (1.6f - sp.energy)
+                } else {
+                    pet.vx = dx / d * 30f; pet.vy = dy / d * 30f
+                    pet.x += pet.vx * dt; pet.y += pet.vy * dt
+                }
+                continue
+            }
             if (pet.pauseT > 0f) {
                 pet.pauseT -= dt
                 pet.vx *= 0.85f; pet.vy *= 0.85f
@@ -730,6 +762,17 @@ class GameEngine(
                 val s = parts.getOrNull(0)?.toIntOrNull() ?: return
                 val pts = parts.getOrNull(1)?.toIntOrNull() ?: return
                 if (s in Species.ALL.indices) addBond(s, pts.coerceIn(1, 8)) else return
+            }
+            "release" -> {
+                // Set one free: the weakest of that species leaves the box,
+                // pays a 3-essence parting gift, and deepens the kinship.
+                val s = value.toIntOrNull() ?: return
+                val idx = box.withIndex().filter { it.value.species == s }
+                    .minByOrNull { it.value.level }?.index ?: return
+                box.removeAt(idx)
+                store.boxJson = dumpBox(box)
+                store.essence = store.essence + 3
+                addBond(s, 2)
             }
             "reset" -> {
                 store.wipe()

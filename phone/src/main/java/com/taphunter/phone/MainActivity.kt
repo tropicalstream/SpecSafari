@@ -256,8 +256,9 @@ class MainActivity : Activity() {
             }
             addView(text("⌂ CREATURE DEN", 19f, teal, bold = true, serif = true))
             addView(text(
-                "Stroll a 3D habitat with your companions — pet them, feed them, " +
-                    "furnish their world. Tap to enter.", 13f, parchment))
+                "One living world, meadow to shrine — your companions nest, sleep, " +
+                    "play, and sing in it. Pet, feed, furnish… or set one free. " +
+                    "Tap to enter.", 13f, parchment))
             setOnClickListener {
                 startActivity(android.content.Intent(this@MainActivity,
                     com.taphunter.phone.den.DenActivity::class.java))

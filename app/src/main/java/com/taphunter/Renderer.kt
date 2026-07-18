@@ -218,12 +218,22 @@ class Renderer(private val g: GameEngine) {
 
         val sel = g.denPets.getOrNull(g.denSel)
         for (pet in g.denPets) {
+            // Every resident keeps a nest; sleepers breathe there in peace.
+            strokeP.color = Color.argb(70, 200, 170, 120); strokeP.strokeWidth = 2f
+            c.drawOval(pet.homeX - 16f, pet.homeY + 8f, pet.homeX + 16f, pet.homeY + 16f, strokeP)
             val excited = pet.happyT > 0f
             if (pet === sel) {
                 strokeP.color = Color.rgb(255, 255, 255); strokeP.strokeWidth = 2f
                 c.drawCircle(pet.x, pet.y, 26f + sin(t * 4f) * 2f, strokeP)
             }
             Sprites.creature(c, pet.species, pet.x, pet.y, 13f, t + pet.phase, excited)
+            if (pet.sleeping) {
+                small.textAlign = Paint.Align.LEFT
+                small.color = Color.rgb(150, 190, 255)
+                c.drawText("z", pet.x + 12f, pet.y - 18f - sin(t * 2f) * 3f, small)
+                c.drawText("Z", pet.x + 18f, pet.y - 28f - sin(t * 2f + 1f) * 3f, small)
+                small.color = Color.rgb(180, 220, 245)
+            }
             if (excited) {
                 // Hearts float up while the joy lasts.
                 body.textAlign = Paint.Align.CENTER

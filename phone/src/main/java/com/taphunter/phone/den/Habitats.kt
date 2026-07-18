@@ -5,36 +5,37 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * Four biospheres, each about eight phone-screens wide, stitched from
- * MICROHABITATS — ponds, thickets, ember vents, burrow banks, void pools,
- * perches — that match the creatures' ecological niches. A pond-dweller
- * makes for water; a dusk-stalker haunts the dark; a burrower travels the
- * soft ground between mounds. The shop catalog lives here too.
+ * ONE world now — a continuous biosphere sixteen screens wide, walked end
+ * to end: moonlit meadow into tide cove into ember hollow into starfall
+ * shrine, sky and ground blending at the seams. No stage-swapping; the
+ * creatures keep their nests and the furniture stays where you put it.
  */
 class Zone(val kind: String, val x: Float, val z: Float, val r: Float)
 
-class HabitatDef(
+class Biome(
     val name: String,
+    val x0: Float, val x1: Float,
     val skyTop: Int, val skyBot: Int, val fog: Int, val ground: Int,
     val fireflyColor: Int,
     val loved: Set<String>,
-    val zones: List<Zone>,
-    val decor: (MeshBuilder, Float) -> Unit    // bespoke scenery beyond the zones
-)
+    val decor: (MeshBuilder) -> Unit
+) {
+    val center get() = (x0 + x1) / 2f
+}
 
 class ItemDef(
     val id: String,
     val name: String,
     val price: Int,
     val treat: Boolean,
-    val bondPts: Int,               // treats only
-    val loved: Set<String>,         // decor: temperaments drawn to it
+    val bondPts: Int,
+    val loved: Set<String>,
     val cardColor: Int,
-    val build: (MeshBuilder, Float, Float) -> Unit   // at (x, z)
+    val build: (MeshBuilder, Float, Float) -> Unit
 )
 
 object Habitats {
-    const val WORLD_W = 27.2f      // ≈ eight screens; a proper stroll
+    const val WORLD_W = 54.4f      // ≈ sixteen screens; a genuine hike
 
     private fun tree(b: MeshBuilder, x: Float, z: Float, s: Float, leaf: Int, trunk: Int) {
         b.box(x, s * 0.35f, z, s * 0.08f, s * 0.35f, s * 0.08f, trunk)
@@ -51,12 +52,8 @@ object Habitats {
         b.cone(x + s * 0.25f, 0f, z + s * 0.15f, s * 0.13f, -0.2f, 1f, 0.1f, s * 0.55f, c, 0.6f, 5)
     }
 
-    /**
-     * Draw one microhabitat's scenery. Generic per kind, tinted per habitat,
-     * so every biosphere is fully furnished without a thousand hand-placed
-     * props — the bespoke decor adds the local character on top.
-     */
-    fun zoneDecor(b: MeshBuilder, zone: Zone, hab: HabitatDef) {
+    /** One microhabitat's scenery: generic per kind, at absolute coords. */
+    fun zoneDecor(b: MeshBuilder, zone: Zone, @Suppress("UNUSED_PARAMETER") biome: Biome) {
         val x = zone.x; val z = zone.z; val r = zone.r
         when (zone.kind) {
             "WATER" -> {
@@ -125,100 +122,64 @@ object Habitats {
         }
     }
 
-    val ALL = arrayOf(
-        HabitatDef(
-            "MOONLIT MEADOW",
+    val BIOMES = arrayOf(
+        Biome(
+            "MEADOW", 0f, 14f,
             Color.rgb(10, 16, 44), Color.rgb(24, 60, 74), Color.rgb(14, 30, 46),
             Color.rgb(22, 52, 40), Color.rgb(170, 255, 190),
             setOf("DOZY", "ZOOMY", "POLITE", "HELPFUL", "STEADFAST", "GIGGLY", "BREEZY", "SNUG"),
-            listOf(
-                Zone("WATER", 4.2f, -0.6f, 1.5f),
-                Zone("BLOOM", 8.6f, 0.2f, 1.6f),
-                Zone("THICKET", 12.8f, -1.2f, 1.6f),
-                Zone("BURROW", 16.8f, 0.4f, 1.3f),
-                Zone("PERCH", 20.6f, -1.0f, 1.2f),
-                Zone("STONE", 23.8f, 0.1f, 1.2f),
-                Zone("VOID", 25.8f, -1.4f, 1.1f),
-            ),
-            { b, w ->
-                for (i in 0..12) tree(b, 0.6f + i * (w - 1.2f) / 12f + (i % 3) * 0.3f,
+            { b ->
+                for (i in 0..6) tree(b, 1f + i * 1.9f + (i % 3) * 0.3f,
                     -2.9f - (i % 2) * 0.9f, 0.85f + (i % 3) * 0.28f,
                     Color.rgb(30, 96, 66), Color.rgb(60, 44, 40))
-                for (i in 0..8)
-                    b.ellipsoid(1f + i * (w - 2f) / 8f, 0.05f, 1.6f + (i % 2) * 0.5f,
-                        0.05f, 0.05f, 0.05f, Color.rgb(200, 255, 210), 0.8f, 4, 5)
+                for (i in 0..5) b.ellipsoid(1.5f + i * 2.2f, 0.05f, 1.6f + (i % 2) * 0.5f,
+                    0.05f, 0.05f, 0.05f, Color.rgb(200, 255, 210), 0.8f, 4, 5)
             }
         ),
-        HabitatDef(
-            "EMBER HOLLOW",
-            Color.rgb(26, 8, 20), Color.rgb(80, 34, 20), Color.rgb(40, 16, 16),
-            Color.rgb(48, 26, 24), Color.rgb(255, 180, 90),
-            setOf("COZY", "DRAMATIC", "GREEDY", "BRASH", "PUNCTUAL", "RUMBLY", "SPLASHY"),
-            listOf(
-                Zone("EMBER", 3.6f, -0.4f, 1.5f),
-                Zone("STONE", 7.8f, 0.3f, 1.4f),
-                Zone("BURROW", 11.6f, -1.1f, 1.3f),
-                Zone("WATER", 15.2f, 0.2f, 1.2f),      // a small hot spring
-                Zone("VOID", 19.0f, -1.2f, 1.3f),      // the ash drift
-                Zone("PERCH", 22.6f, -0.4f, 1.2f),
-                Zone("EMBER", 25.6f, 0.3f, 1.2f),
-            ),
-            { b, w ->
-                for (i in 0..8) {
-                    val x = 1f + i * (w - 2f) / 8f
-                    b.box(x, 0.55f, -2.6f, 0.05f, 0.55f, 0.05f, Color.rgb(50, 34, 34))
-                    b.ellipsoid(x, 1.2f, -2.6f, 0.14f, 0.18f, 0.14f, Color.rgb(255, 170, 70), 0.95f, 6, 8)
-                }
-                for (i in 0..9) rock(b, 0.5f + i * (w - 1f) / 9f, -3.4f,
-                    0.7f + (i % 3) * 0.3f, Color.rgb(70, 40, 34))
-            }
-        ),
-        HabitatDef(
-            "TIDE COVE",
+        Biome(
+            "COVE", 14f, 28f,
             Color.rgb(6, 14, 40), Color.rgb(20, 70, 90), Color.rgb(10, 30, 44),
             Color.rgb(30, 52, 58), Color.rgb(140, 230, 255),
             setOf("SLY", "SERENE", "GIGGLY", "FLICKERY", "WRY", "BOISTEROUS", "SPLASHY", "BREEZY"),
-            listOf(
-                Zone("WATER", 4.6f, -0.5f, 2.2f),      // the lagoon
-                Zone("THICKET", 9.4f, -1.2f, 1.5f),    // the kelp stand
-                Zone("BURROW", 13.2f, 0.4f, 1.3f),     // the dune
-                Zone("STONE", 17.0f, -0.8f, 1.4f),     // the tidepools
-                Zone("BLOOM", 20.8f, 0.2f, 1.4f),      // the shell drift
-                Zone("WATER", 24.4f, -0.9f, 1.6f),     // the far pool
-            ),
-            { b, w ->
-                b.quad(-3f, 0.03f, -5.2f, w + 3f, 0.03f, -5.2f,
-                    w + 3f, 0.03f, -2.6f, -3f, 0.03f, -2.6f, Color.rgb(30, 120, 150), 0.45f)
-                for (i in 0..6) {
-                    val x = 1.4f + i * (w - 2.8f) / 6f
+            { b ->
+                b.quad(14f, 0.03f, -5.2f, 28f, 0.03f, -5.2f,
+                    28f, 0.03f, -2.6f, 14f, 0.03f, -2.6f, Color.rgb(30, 120, 150), 0.45f)
+                for (i in 0..2) {
+                    val x = 16.5f + i * 4.4f
                     b.box(x - 0.5f, 0.5f, -3.4f, 0.18f, 0.5f, 0.2f, Color.rgb(46, 62, 76))
                     b.box(x + 0.5f, 0.5f, -3.4f, 0.18f, 0.5f, 0.2f, Color.rgb(46, 62, 76))
                     b.box(x, 1.05f, -3.4f, 0.75f, 0.14f, 0.2f, Color.rgb(52, 70, 84))
                 }
-                for (i in 0..8)
-                    b.cone(0.8f + i * (w - 1.6f) / 8f, 0f, -2.2f, 0.04f,
+                for (i in 0..6)
+                    b.cone(14.8f + i * 1.9f, 0f, -2.2f, 0.04f,
                         0.15f, 1f, 0f, 0.8f + (i % 3) * 0.3f, Color.rgb(40, 130, 90), 0.15f, 4)
             }
         ),
-        HabitatDef(
-            "STARFALL SHRINE",
+        Biome(
+            "HOLLOW", 28f, 41f,
+            Color.rgb(26, 8, 20), Color.rgb(80, 34, 20), Color.rgb(40, 16, 16),
+            Color.rgb(48, 26, 24), Color.rgb(255, 180, 90),
+            setOf("COZY", "DRAMATIC", "GREEDY", "BRASH", "PUNCTUAL", "RUMBLY"),
+            { b ->
+                for (i in 0..4) {
+                    val x = 29f + i * 2.8f
+                    b.box(x, 0.55f, -2.6f, 0.05f, 0.55f, 0.05f, Color.rgb(50, 34, 34))
+                    b.ellipsoid(x, 1.2f, -2.6f, 0.14f, 0.18f, 0.14f, Color.rgb(255, 170, 70), 0.95f, 6, 8)
+                }
+                for (i in 0..5) rock(b, 28.6f + i * 2.3f, -3.4f,
+                    0.7f + (i % 3) * 0.3f, Color.rgb(70, 40, 34))
+            }
+        ),
+        Biome(
+            "SHRINE", 41f, WORLD_W,
             Color.rgb(8, 4, 24), Color.rgb(44, 22, 78), Color.rgb(20, 12, 40),
             Color.rgb(30, 24, 52), Color.rgb(210, 180, 255),
             setOf("OTHERWORLDLY", "ALOOF", "CLEVER", "PEDANTIC", "DROWSY", "BASHFUL", "JITTERY", "SNUG"),
-            listOf(
-                Zone("VOID", 4.0f, -0.6f, 1.7f),       // the still pool of night
-                Zone("THICKET", 8.4f, -1.1f, 1.5f),    // the crystal grove
-                Zone("BLOOM", 12.6f, 0.3f, 1.4f),      // the moss ring
-                Zone("BURROW", 16.4f, -0.9f, 1.3f),    // the meteor crater
-                Zone("PERCH", 20.2f, -0.5f, 1.3f),     // the floating step
-                Zone("STONE", 24.0f, 0.2f, 1.3f),
-                Zone("VOID", 26.2f, -1.3f, 1.0f),
-            ),
-            { b, w ->
-                for (i in 0..10) crystal(b, 0.7f + i * (w - 1.4f) / 10f, -2.8f - (i % 2) * 0.8f,
+            { b ->
+                for (i in 0..5) crystal(b, 42f + i * 2.2f, -2.8f - (i % 2) * 0.8f,
                     0.8f + (i % 3) * 0.4f, Color.rgb(150, 110, 255))
-                for (i in 0..8) {
-                    val x = 1.2f + i * (w - 2.4f) / 8f
+                for (i in 0..4) {
+                    val x = 42.5f + i * 2.5f
                     b.cone(x, 1.5f + (i % 2) * 0.4f, -2.2f, 0.09f, 0f, 1f, 0f, 0.18f,
                         Color.rgb(220, 200, 255), 0.85f, 4)
                     b.cone(x, 1.5f + (i % 2) * 0.4f, -2.2f, 0.09f, 0f, -1f, 0f, 0.18f,
@@ -228,10 +189,60 @@ object Habitats {
         ),
     )
 
-    /** Six decor stands per habitat, spread along the stroll. */
-    fun slotX(i: Int) = 2.2f + i * (WORLD_W - 4.4f) / 5f
+    /** Every microhabitat of the merged world, absolute coordinates. */
+    val ZONES = listOf(
+        // Meadow reach
+        Zone("WATER", 3.4f, -0.6f, 1.6f),
+        Zone("BLOOM", 6.6f, 0.2f, 1.5f),
+        Zone("THICKET", 9.6f, -1.2f, 1.6f),
+        Zone("BURROW", 12.2f, 0.4f, 1.3f),
+        // Tide reach
+        Zone("WATER", 17.0f, -0.6f, 2.2f),
+        Zone("THICKET", 20.8f, -1.2f, 1.4f),   // the kelp stand
+        Zone("BURROW", 23.4f, 0.4f, 1.3f),     // the dune
+        Zone("STONE", 25.8f, -0.8f, 1.4f),     // the tidepools
+        // Ember reach
+        Zone("EMBER", 29.6f, -0.4f, 1.5f),
+        Zone("STONE", 32.8f, 0.3f, 1.4f),
+        Zone("WATER", 35.4f, 0.1f, 1.2f),      // the hot spring
+        Zone("VOID", 37.8f, -1.2f, 1.3f),      // the ash drift
+        Zone("PERCH", 39.8f, -0.5f, 1.2f),
+        // Shrine reach
+        Zone("VOID", 43.2f, -0.6f, 1.7f),
+        Zone("THICKET", 46.2f, -1.1f, 1.4f),   // the crystal grove
+        Zone("BLOOM", 48.8f, 0.3f, 1.4f),      // the moss ring
+        Zone("BURROW", 51.0f, -0.9f, 1.2f),    // the meteor crater
+        Zone("PERCH", 53.0f, -0.4f, 1.1f),
+    )
+
+    fun biomeAt(x: Float): Biome {
+        for (b in BIOMES) if (x < b.x1) return b
+        return BIOMES.last()
+    }
+
+    /** Color blended across biome seams (±2.5 units of gentle transition). */
+    fun blendColor(x: Float, pick: (Biome) -> Int): Int {
+        val b = biomeAt(x)
+        val i = BIOMES.indexOf(b)
+        val half = 2.5f
+        val (other, t) = when {
+            i > 0 && x - b.x0 < half -> BIOMES[i - 1] to (0.5f - (x - b.x0) / (half * 2f))
+            i < BIOMES.size - 1 && b.x1 - x < half -> BIOMES[i + 1] to (0.5f - (b.x1 - x) / (half * 2f))
+            else -> return pick(b)
+        }
+        val ca = pick(b); val cb = pick(other)
+        val k = t.coerceIn(0f, 0.5f)
+        return Color.rgb(
+            (Color.red(ca) * (1 - k) + Color.red(cb) * k).toInt(),
+            (Color.green(ca) * (1 - k) + Color.green(cb) * k).toInt(),
+            (Color.blue(ca) * (1 - k) + Color.blue(cb) * k).toInt()
+        )
+    }
+
+    /** Twelve decor stands along the whole stroll. */
+    fun slotX(i: Int) = 2.4f + i * (WORLD_W - 4.8f) / 11f
     const val SLOT_Z = -1.85f
-    const val SLOTS = 6
+    const val SLOTS = 12
 
     val ITEMS = arrayOf(
         ItemDef("honey", "HONEY TREAT", 15, true, 2, emptySet(), Color.rgb(255, 190, 80),

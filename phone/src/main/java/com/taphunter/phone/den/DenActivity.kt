@@ -21,11 +21,11 @@ import org.json.JSONObject
 import kotlin.math.abs
 
 /**
- * The Creature Den, phone edition: a 3D diorama you stroll through with a
- * thumb-drag, four habitats wide open to whoever you've caught. Tap a
- * creature to pet it; buy treats and habitat furniture with essence — every
- * coin spent and bond earned is beamed to the glasses save, which stays
- * the single source of truth.
+ * The Creature Den: ONE living world, sixteen screens wide — meadow into
+ * cove into hollow into shrine — walked Minecraft-style. Creatures nest,
+ * sleep, play, and sing; the ambience crossfades between four real field
+ * recordings as you stroll. Residents can be set free back into the real
+ * world: tap one, SET FREE, and it runs for the horizon.
  */
 class DenActivity : Activity() {
 
@@ -41,14 +41,16 @@ class DenActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var prefs: android.content.SharedPreferences
     private lateinit var mirror: android.content.SharedPreferences
+    private var audio: DenAudio? = null
 
     private var dex: JSONObject? = null
     private var walletText: TextView? = null
     private var infoName: TextView? = null
     private var infoLine: TextView? = null
     private var hintText: TextView? = null
+    private var freeButton: Button? = null
     private val shopCards = HashMap<String, View>()
-    private val habitatChips = ArrayList<Button>()
+    private val biomeChips = ArrayList<Button>()
     private var armedTreat: String? = null
     private val petAt = HashMap<Int, Long>()
 
@@ -69,7 +71,6 @@ class DenActivity : Activity() {
             val prevEss = prefs.getInt("lastDexEssence", -1)
             val newEss = fresh.optInt("essence")
             if (prevEss >= 0 && newEss != prevEss) {
-                // The glasses absorbed some (or all) of our spending — shrink the IOU.
                 val absorbed = (prevEss - newEss).coerceAtLeast(0)
                 prefs.edit().putInt("spentOverlay", (overlay() - absorbed).coerceAtLeast(0)).apply()
             }
@@ -96,9 +97,6 @@ class DenActivity : Activity() {
     private fun population(): List<Int> {
         if (devMode) return Species.ALL.indices.toList()
         val counts = dex?.optJSONArray("counts") ?: return emptyList()
-        // The box comes home: repeated catches earn extra den residents of
-        // that species (a 2nd at 3 catches, a 3rd at 6), so a devoted
-        // Shadepaw-hunter gets a visible clowder, not a lone ambassador.
         val out = mutableListOf<Int>()
         for (s in 0 until Species.ALL.size) {
             val n = counts.optInt(s)
@@ -107,11 +105,20 @@ class DenActivity : Activity() {
             if (n >= 3) out += s
             if (n >= 6) out += s
         }
-        return out.take(16)
+        return out.take(20)
     }
 
-    private fun placedFor(h: Int): MutableList<String> =
-        (prefs.getString("items_$h", "") ?: "").split(',').filter { it.isNotBlank() }.toMutableList()
+    /** The one world's furniture; migrates the old per-stage purchases. */
+    private fun placed(): MutableList<String> {
+        if (!prefs.contains("items_world")) {
+            val merged = LinkedHashSet<String>()
+            for (h in 0..3) (prefs.getString("items_$h", "") ?: "")
+                .split(',').filter { it.isNotBlank() }.forEach { merged.add(it) }
+            prefs.edit().putString("items_world", merged.take(Habitats.SLOTS).joinToString(",")).apply()
+        }
+        return (prefs.getString("items_world", "") ?: "")
+            .split(',').filter { it.isNotBlank() }.toMutableList()
+    }
 
     private fun pouch(id: String) = prefs.getInt("pouch_$id", 0)
 
@@ -125,8 +132,7 @@ class DenActivity : Activity() {
         mirror = getSharedPreferences("mirror", Context.MODE_PRIVATE)
         refreshDex()
 
-        val habitat = prefs.getInt("habitat", 0)
-        renderer.configure(population(), habitat, placedFor(habitat))
+        renderer.configure(population(), placed())
         renderer.resetCamera()
 
         glView = GLSurfaceView(this).apply {
@@ -134,8 +140,6 @@ class DenActivity : Activity() {
             setRenderer(renderer)
         }
 
-        // Minecraft manners: a floating joystick under the left thumb walks,
-        // the right thumb drags to look around, and a still tap pets.
         stick = StickView(this)
         var movePid = -1; var lookPid = -1
         var moveOx = 0f; var moveOy = 0f
@@ -168,7 +172,7 @@ class DenActivity : Activity() {
                                 if (len > 1f) { dx /= len; dy /= len }
                                 if (abs(e.getX(i) - moveOx) > 24f ||
                                     abs(e.getY(i) - moveOy) > 24f) moveMoved = true
-                                renderer.setMove(dx, -dy)   // screen-up = forward
+                                renderer.setMove(dx, -dy)
                                 stick.show(moveOx, moveOy,
                                     moveOx + dx * stickRadius, moveOy + dy * stickRadius, stickRadius)
                             }
@@ -186,7 +190,6 @@ class DenActivity : Activity() {
                     val pid = e.getPointerId(e.actionIndex)
                     if (pid == movePid) {
                         movePid = -1; renderer.setMove(0f, 0f); stick.hide()
-                        // A still left-thumb tap is a pet, not a walk.
                         if (!moveMoved && System.currentTimeMillis() - moveDownAt < 350L)
                             onTap(moveOx, moveOy)
                     }
@@ -224,6 +227,7 @@ class DenActivity : Activity() {
             if (pouch(armed) <= 0) armedTreat = null
             pushBond(c.species, item.bondPts)
             renderer.celebrate(i, big = true)
+            audio?.voice(c.species, 1)
             hint("${sp.name} DEVOURED THE ${item.name}!")
         } else {
             val now = System.currentTimeMillis()
@@ -232,7 +236,9 @@ class DenActivity : Activity() {
                 pushBond(c.species, 1)
             }
             renderer.celebrate(i, big = false)
-            hint("${sp.name} — THE ${sp.temperament} ONE — ${sp.nature}")
+            audio?.voice(c.species, 0)
+            hint(if (c.sleeping) "${sp.name} WAKES, MOSTLY FORGIVING"
+                else "${sp.name} — THE ${sp.temperament} ONE — ${sp.nature}")
         }
         updateInfo()
         updateShop()
@@ -243,7 +249,6 @@ class DenActivity : Activity() {
     private fun overlayUi(): View {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        // Top bar: back, title, wallet.
         val top = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -265,25 +270,47 @@ class DenActivity : Activity() {
         top.addView(walletText)
         col.addView(top)
 
-        // Habitat chips.
+        // The world's regions — tapping glides you there. One world, no swaps.
         val chips = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(8), 0, dp(8), 0)
         }
-        for ((i, hab) in Habitats.ALL.withIndex()) {
+        for ((i, biome) in Habitats.BIOMES.withIndex()) {
             val b = Button(this).apply {
-                text = hab.name.split(' ')[0]; textSize = 11f
+                text = biome.name; textSize = 11f
                 typeface = Typeface.DEFAULT_BOLD
                 setBackgroundColor(Color.TRANSPARENT)
-                setOnClickListener { switchHabitat(i) }
+                setOnClickListener {
+                    renderer.travelTo(i)
+                    hint("STROLLING TO THE ${biome.name}…")
+                }
             }
-            habitatChips += b
+            biomeChips += b
             chips.addView(b, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         }
         col.addView(chips)
 
-        // Spacer pushes the shop down.
         col.addView(View(this), LinearLayout.LayoutParams(1, 0, 1f))
+
+        // SET FREE — visible only when someone is chosen.
+        val freeRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+            setPadding(0, 0, dp(12), dp(4))
+        }
+        freeButton = Button(this).apply {
+            text = "🕊 SET FREE"
+            textSize = 13f; typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.rgb(10, 24, 18))
+            background = GradientDrawable().apply {
+                setColor(teal); cornerRadius = dp(18).toFloat()
+            }
+            setPadding(dp(16), dp(6), dp(16), dp(6))
+            visibility = View.GONE
+            setOnClickListener { confirmRelease() }
+        }
+        freeRow.addView(freeButton)
+        col.addView(freeRow)
 
         hintText = TextView(this).apply {
             textSize = 12f; setTextColor(teal); gravity = Gravity.CENTER
@@ -300,7 +327,6 @@ class DenActivity : Activity() {
         }
         col.addView(infoLine)
 
-        // The shop: one horizontal shelf of boxes.
         val shelf = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(8), 0, dp(8), dp(10))
@@ -313,16 +339,7 @@ class DenActivity : Activity() {
         col.addView(HorizontalScrollView(this).apply {
             addView(shelf); isHorizontalScrollBarEnabled = false
         })
-
-        switchHabitat(prefs.getInt("habitat", 0))
         return col
-    }
-
-    private val poll = object : Runnable {
-        override fun run() {
-            refreshDex(); updateWallet(); updateShop(); updateInfo()
-            handler.postDelayed(this, 1500)
-        }
     }
 
     private fun shopCard(item: ItemDef): View {
@@ -365,26 +382,41 @@ class DenActivity : Activity() {
             armedTreat = item.id
             hint("TAP A CREATURE TO FEED THE ${item.name}")
         } else {
-            val h = prefs.getInt("habitat", 0)
-            val placed = placedFor(h)
-            if (item.id in placed) { hint("ALREADY IN THIS HABITAT") ; return }
-            if (placed.size >= Habitats.SLOTS) { hint("THIS HABITAT IS FULLY FURNISHED"); return }
+            val placedNow = placed()
+            if (item.id in placedNow) { hint("ALREADY SOMEWHERE IN THE WORLD"); return }
+            if (placedNow.size >= Habitats.SLOTS) { hint("THE WORLD IS FULLY FURNISHED"); return }
             if (!spend(if (devMode) 0 else item.price)) { updateShop(); return }
-            placed += item.id
-            prefs.edit().putString("items_$h", placed.joinToString(",")).apply()
-            renderer.placeItems(placed)
+            placedNow += item.id
+            prefs.edit().putString("items_world", placedNow.joinToString(",")).apply()
+            renderer.placeItems(placedNow)
             hint("${item.name} PLACED — SOMEONE WILL LOVE IT")
         }
         updateWallet(); updateShop()
     }
 
-    private fun switchHabitat(i: Int) {
-        prefs.edit().putInt("habitat", i).apply()
-        renderer.configure(population(), i, placedFor(i))
-        for ((k, chip) in habitatChips.withIndex())
-            chip.setTextColor(if (k == i) gold else dim)
-        hint(Habitats.ALL[i].name)
-        updateShop()
+    // ----------------------------------------------------------- release
+
+    private fun confirmRelease() {
+        val c = renderer.creatures.getOrNull(renderer.selected) ?: return
+        val sp = Species.ALL[c.species]
+        if (devMode) { hint("DEV CREATURES ARE ONLY VISITING"); return }
+        if (!LocationBeamService.connected) { hint("LINK THE GLASSES TO SET FREE"); return }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Set ${sp.name} free?")
+            .setMessage(
+                "It returns to the wild places it came from — ${sp.habitat.lowercase()}. " +
+                    "One leaves your box; it leaves 3 essence in parting, and its kind " +
+                    "will remember you fondly.")
+            .setPositiveButton("SET FREE") { _, _ ->
+                LocationBeamService.sendLine("SET release ${c.species}")
+                val sel = renderer.selected
+                renderer.release(sel)
+                audio?.voice(c.species, 4)
+                freeButton?.visibility = View.GONE
+                hint("${sp.name} RUNS FOR THE HORIZON. WALK YOUR STREETS — IT'S OUT THERE.")
+            }
+            .setNegativeButton("STAY A WHILE", null)
+            .show()
     }
 
     // ------------------------------------------------------------ redraw
@@ -394,27 +426,27 @@ class DenActivity : Activity() {
     }
 
     private fun updateShop() {
-        val h = prefs.getInt("habitat", 0)
-        val placed = placedFor(h)
+        val placedNow = placed()
         for (item in Habitats.ITEMS) {
             val card = shopCards[item.id] ?: continue
             val price = card.findViewWithTag<TextView>("price") ?: continue
             val afford = devMode || (wallet() >= item.price && LocationBeamService.connected)
             price.text = when {
                 item.treat && pouch(item.id) > 0 -> "×${pouch(item.id)} READY"
-                item.id in placed -> "PLACED"
+                item.id in placedNow -> "PLACED"
                 devMode -> "FREE·DEV"
                 else -> "◆ ${item.price}"
             }
-            card.alpha = if (afford || pouch(item.id) > 0 || item.id in placed) 1f else 0.35f
+            card.alpha = if (afford || pouch(item.id) > 0 || item.id in placedNow) 1f else 0.35f
         }
     }
 
     private fun updateInfo() {
         val c = renderer.creatures.getOrNull(renderer.selected)
+        freeButton?.visibility = if (c != null && !devMode) View.VISIBLE else View.GONE
         if (c == null) {
             infoName?.text = if (renderer.creatures.isEmpty())
-                "The den is empty — catch creatures on the glasses first." else
+                "The world is waiting — catch creatures on the glasses first." else
                 "Left thumb walks · right thumb looks · tap to pet."
             infoLine?.text = ""
             return
@@ -427,19 +459,60 @@ class DenActivity : Activity() {
         infoName?.text = "${sp.name}${if (caught > 1) " ×$caught" else ""} · " +
             "the ${sp.temperament.lowercase()} one · " +
             "♥".repeat(hearts.coerceAtLeast(0)) + "♡".repeat((5 - hearts).coerceAtLeast(0))
-        infoLine?.text = sp.nature
+        infoLine?.text = if (c.sleeping) "Asleep in its nest. (${sp.niche.lowercase()})" else sp.nature
     }
 
     private fun hint(s: String) { hintText?.text = s }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
-    override fun onResume() { super.onResume(); glView.onResume(); handler.post(poll) }
-    override fun onPause() { glView.onPause(); handler.removeCallbacksAndMessages(null); super.onPause() }
+    // ----------------------------------------------------------- pulses
+
+    private val poll = object : Runnable {
+        override fun run() {
+            refreshDex(); updateWallet(); updateShop(); updateInfo()
+            handler.postDelayed(this, 1500)
+        }
+    }
+
+    /** Fast pulse: creature voices and the ambience mix follow the walk. */
+    private val audioPump = object : Runnable {
+        override fun run() {
+            audio?.setListener(renderer.camPX)
+            while (true) {
+                val ev = renderer.audioEvents.poll() ?: break
+                val kind = when (ev[0]) {
+                    DenRenderer.EV_MEET -> 2
+                    DenRenderer.EV_CHASE_END -> 3
+                    DenRenderer.EV_RELEASED -> 4
+                    else -> 5
+                }
+                audio?.voice(ev[1], kind)
+            }
+            // The biome you stand in glows in the travel chips.
+            val here = Habitats.biomeAt(renderer.camPX)
+            for ((i, chip) in biomeChips.withIndex())
+                chip.setTextColor(if (Habitats.BIOMES[i] === here) gold else dim)
+            handler.postDelayed(this, 150)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        glView.onResume()
+        if (audio == null) audio = DenAudio(this)
+        handler.post(poll); handler.post(audioPump)
+    }
+
+    override fun onPause() {
+        glView.onPause()
+        handler.removeCallbacksAndMessages(null)
+        audio?.release(); audio = null
+        super.onPause()
+    }
 }
 
-/** The floating joystick's on-screen ghost: a ring where the thumb landed,
- *  a puck where it is now. Not touchable — pure feedback. */
+/** The floating joystick's on-screen ghost. */
 private class StickView(ctx: Context) : View(ctx) {
     private var active = false
     private var ox = 0f; private var oy = 0f
