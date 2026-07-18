@@ -309,6 +309,34 @@ class MainActivity : Activity() {
             if (known) {
                 c.addView(text("Field biology — ${sp.biology}", 12.5f, Color.rgb(150, 190, 165))
                     .apply { setPadding(0, dp(6), 0, 0) })
+
+                // Ethology: the evolved perceptual profile and how to approach it.
+                val eth = com.taphunter.shared.EthoModel.of(i)
+                c.addView(text(
+                    "Ethology — ${com.taphunter.shared.EthoModel.warinessLabel(eth)}, " +
+                        "flees ~${"%.1f".format(eth.baseFID)} m under a direct approach. " +
+                        com.taphunter.shared.EthoModel.approachTip(eth),
+                    12.5f, Color.rgb(150, 190, 245)).apply { setPadding(0, dp(6), 0, 0) })
+
+                // Recorded field history — your relationship, from the database.
+                val flPets = d?.optJSONArray("flPets")?.optInt(i) ?: 0
+                val flTreats = d?.optJSONArray("flTreats")?.optInt(i) ?: 0
+                val flBerries = d?.optJSONArray("flBerries")?.optInt(i) ?: 0
+                val flStartles = d?.optJSONArray("flStartles")?.optInt(i) ?: 0
+                val flClosest = d?.optJSONArray("flClosest")?.optInt(i) ?: 9999
+                val hasHistory = flPets + flTreats + flBerries + flStartles > 0 || flClosest < 9999
+                if (hasHistory) {
+                    val closeStr = if (flClosest in 1..9998) " · closest ${"%.1f".format(flClosest / 100f)} m" else ""
+                    val habit = com.taphunter.shared.EthoModel.habituation(flPets, flTreats, flBerries, flStartles)
+                    val hbar = "●".repeat((habit * 5).toInt()) + "○".repeat(5 - (habit * 5).toInt())
+                    c.addView(text(
+                        "Field notes — pet ×$flPets · treats ×$flTreats · berries ×$flBerries · " +
+                            "startled ×$flStartles$closeStr\nHabituation to you $hbar",
+                        12f, Color.rgb(210, 190, 140)).apply { setPadding(0, dp(6), 0, 0) })
+                } else {
+                    c.addView(text("Field notes — no encounters logged yet. Visit it in the den.",
+                        12f, dim).apply { setPadding(0, dp(6), 0, 0) })
+                }
                 c.addView(text("“${sp.nature}”", 12.5f, dim).apply { setPadding(0, dp(4), 0, 0) })
             }
             cards.add(c)

@@ -159,6 +159,19 @@ class GameEngine(
         store.bondCsv = bonds.joinToString(",")
     }
 
+    // Field-history mirror from the phone: [species][pets,treats,berries,startles,closestCm].
+    private val fieldDb = Array(Species.ALL.size) { intArrayOf(0, 0, 0, 0, 9999) }
+    private var fieldLoaded = false
+    private fun loadField() {
+        if (fieldLoaded) return
+        fieldLoaded = true
+        val rows = store.fieldCsv.split(';')
+        for (s in fieldDb.indices) {
+            val cols = rows.getOrNull(s)?.split(',') ?: continue
+            for (k in 0 until 5) fieldDb[s][k] = cols.getOrNull(k)?.toIntOrNull() ?: fieldDb[s][k]
+        }
+    }
+
     // Settings rows: SBS last per suite convention (x3 menu rule).
     private val settingsRows = arrayOf(
         "SOUND", "SWIPE SPEED", "FLIP HORIZONTAL", "FLIP VERTICAL", "SAFE TAP", "RESET SETTINGS", "SBS 3D MODE"
@@ -741,6 +754,12 @@ class GameEngine(
         loadBonds()
         sb.append(",\"berries\":").append(berries)
         sb.append(",\"bonds\":[").append(bonds.joinToString(",")).append("]")
+        loadField()
+        sb.append(",\"flPets\":[").append(fieldDb.joinToString(",") { it[0].toString() }).append("]")
+        sb.append(",\"flTreats\":[").append(fieldDb.joinToString(",") { it[1].toString() }).append("]")
+        sb.append(",\"flBerries\":[").append(fieldDb.joinToString(",") { it[2].toString() }).append("]")
+        sb.append(",\"flStartles\":[").append(fieldDb.joinToString(",") { it[3].toString() }).append("]")
+        sb.append(",\"flClosest\":[").append(fieldDb.joinToString(",") { it[4].toString() }).append("]")
         sb.append("}")
         return sb.toString()
     }
@@ -757,6 +776,15 @@ class GameEngine(
             // Phone den commerce: essence spent and bonds earned on the phone
             // land here so the glasses save stays the single truth.
             "spend" -> value.toIntOrNull()?.let { store.essence = store.essence - it } ?: return
+            "field" -> {
+                // Phone-authoritative field history for one species, absolute totals.
+                val p = value.split(':')
+                val s = p.getOrNull(0)?.toIntOrNull() ?: return
+                if (s !in Species.ALL.indices) return
+                loadField()
+                for (k in 0 until 5) fieldDb[s][k] = p.getOrNull(k + 1)?.toIntOrNull() ?: fieldDb[s][k]
+                store.fieldCsv = fieldDb.joinToString(";") { it.joinToString(",") }
+            }
             "bond" -> {
                 val parts = value.split(':')
                 val s = parts.getOrNull(0)?.toIntOrNull() ?: return
@@ -778,6 +806,8 @@ class GameEngine(
                 store.wipe()
                 box = parseBox(store.boxJson)
                 bondsLoaded = false
+                fieldLoaded = false
+                for (row in fieldDb) { row[0] = 0; row[1] = 0; row[2] = 0; row[3] = 0; row[4] = 9999 }
                 denPets.clear()
                 engageTarget = null
                 menuIdx = 0

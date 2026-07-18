@@ -3,6 +3,7 @@ package com.taphunter.phone.den
 import android.opengl.GLES20.*
 import android.opengl.GLSurfaceView
 import android.opengl.Matrix
+import com.taphunter.shared.EthoModel
 import com.taphunter.shared.Species
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -33,6 +34,12 @@ class DenC(val species: Int) {
     var meetCd = 0f
     var inWater = false        // for the splash on the way in
     val scale = 0.88f + Random.nextFloat() * 0.24f
+    // Perception of the human: arousal and the flight response.
+    var fleeing = false
+    var startleCd = 0f         // refractory period after a flush
+    var alert = false          // oriented and monitoring, not yet fleeing
+    var soliciting = false     // food-conditioned approach toward the human
+    var solicitCd = 0f
     // The biological clock: waking hours, then home to the nest to sleep.
     var nestX = 2f; var nestZ = -1f
     var awakeT = 20f + Random.nextFloat() * 50f
@@ -57,6 +64,8 @@ class DenRenderer : GLSurfaceView.Renderer {
     companion object {
         const val EV_MEET = 0; const val EV_CHASE_END = 1
         const val EV_RELEASED = 2; const val EV_WAKE = 3
+        // Behavioral events for the field-history recorder + audio.
+        const val BEV_FLEE = 0; const val BEV_SOLICIT = 1; const val BEV_CLOSE = 2
     }
 
     @Volatile private var placedIds: List<String> = emptyList()
@@ -67,6 +76,25 @@ class DenRenderer : GLSurfaceView.Renderer {
 
     /** (event, species) pairs for the activity's audio layer. */
     val audioEvents = ConcurrentLinkedQueue<IntArray>()
+
+    /** (BEV_*, species, arg) for the field-history recorder. */
+    val behaviorEvents = ConcurrentLinkedQueue<IntArray>()
+
+    // Learned per-species quantities, fed from the recorded field history.
+    @Volatile private var fieldHabit = FloatArray(Species.ALL.size)
+    @Volatile private var fieldFamiliar = FloatArray(Species.ALL.size)
+    @Volatile private var fieldFood = FloatArray(Species.ALL.size)
+
+    fun setFieldStats(habit: FloatArray, familiar: FloatArray, food: FloatArray) {
+        fieldHabit = habit; fieldFamiliar = familiar; fieldFood = food
+    }
+
+    // The human's kinematics — position, velocity, gaze — for the FID model.
+    private var prevCamX = 2.5f; private var prevCamZ = 4.2f
+    @Volatile private var playerVX = 0f; @Volatile private var playerVZ = 0f
+    @Volatile private var playerSpeed = 0f
+    @Volatile private var fwdXv = 0f; @Volatile private var fwdZv = -1f
+    private var closeCd = 0f
 
     // ------- the real sky: local clock + local weather over the den
     @Volatile var weatherCode = 0        // WMO code from Open-Meteo, 0 = clear
@@ -319,6 +347,12 @@ class DenRenderer : GLSurfaceView.Renderer {
         val lookX = camPX + fwdX * cos(pitchR)
         val lookY = camPY + sin(pitchR)
         val lookZ = camPZ + fwdZ * cos(pitchR)
+        // Record the human's motion and gaze for the creatures to read.
+        playerVX = (camPX - prevCamX) / dt.coerceAtLeast(0.001f)
+        playerVZ = (camPZ - prevCamZ) / dt.coerceAtLeast(0.001f)
+        playerSpeed = kotlin.math.sqrt(playerVX * playerVX + playerVZ * playerVZ)
+        prevCamX = camPX; prevCamZ = camPZ
+        fwdXv = fwdX; fwdZv = fwdZ
         Matrix.setLookAtM(view, 0, camPX, camPY, camPZ, lookX, lookY, lookZ, 0f, 1f, 0f)
         Matrix.multiplyMM(vp, 0, proj, 0, view, 0)
         lastVp = vp.clone()
@@ -700,6 +734,107 @@ class DenRenderer : GLSurfaceView.Renderer {
                     }
                 }
 
+                // ---- Perception of the human: the flight-initiation model ----
+                c.startleCd = (c.startleCd - dt).coerceAtLeast(0f)
+                c.solicitCd = (c.solicitCd - dt).coerceAtLeast(0f)
+                c.alert = false
+                if (!c.under) {
+                    val eth = EthoModel.of(c.species)
+                    val dxp = c.x - camPX; val dzp = c.z - camPZ
+                    val distP = kotlin.math.sqrt(dxp * dxp + dzp * dzp).coerceAtLeast(0.001f)
+                    val toX = dxp / distP; val toZ = dzp / distP
+                    val approach = playerVX * toX + playerVZ * toZ           // >0 = human closing in
+                    val gaze = (fwdXv * toX + fwdZv * toZ).coerceIn(0f, 1f)   // 1 = looked straight at
+                    val hab = fieldHabit.getOrElse(c.species) { 0f }
+                    val fam = fieldFamiliar.getOrElse(c.species) { 0f }
+                    val food = fieldFood.getOrElse(c.species) { 0f }
+                    // Social buffering: bolder near conspecifics (risk dilution).
+                    var kin = 0
+                    for (o in creatures) if (o !== c && o.species == c.species && !o.under && !o.releasing) {
+                        val d2 = (o.x - c.x) * (o.x - c.x) + (o.z - c.z) * (o.z - c.z)
+                        if (d2 < 16f) kin++
+                    }
+                    val packBuf = eth.packBuffer * kotlin.math.min(kin, 3)
+                    val homeCover = Habitats.ZONES.any {
+                        it.kind == sp.zone && abs(it.x - c.x) + abs(it.z - c.z) < it.r + 0.6f
+                    }
+                    var effFID = eth.baseFID
+                    effFID *= (1f + eth.gazeSensitivity * gaze)               // gaze lengthens flight distance
+                    effFID *= (1f + (playerSpeed * eth.speedSensitivity).coerceAtMost(1.5f)) // fast approach too
+                    effFID *= (1f + eth.neophobia * (1f - fam))               // strangers scarier
+                    effFID -= hab * eth.habituationRate * eth.baseFID         // learned tolerance shrinks it
+                    effFID -= packBuf * 0.35f
+                    if (homeCover) effFID *= (1f - eth.refugeDependence * 0.3f)
+                    effFID = effFID.coerceAtLeast(eth.boldnessFloor)
+                    val alertD = effFID * eth.alertRatio
+
+                    if (c.fleeing) {
+                        if (distP > alertD * 1.3f) {
+                            c.fleeing = false; c.targetX = Float.NaN
+                            if (c.homing) { c.targetX = c.nestX; c.targetZ = c.nestZ; c.targetT = 14f }
+                        } else if (c.targetX.isNaN()) {   // keep running for cover
+                            c.targetX = (c.x + toX * 3.5f).coerceIn(0.8f, w - 0.8f)
+                            c.targetZ = (c.z + toZ * 2f).coerceIn(-2.4f, 1.6f); c.targetT = 6f
+                        }
+                    } else if (distP < effFID && approach > 0.03f && c.startleCd <= 0f) {
+                        // FLUSH — the human crossed the flight distance while closing.
+                        c.fleeing = true; c.startleCd = 5f + Random.nextFloat() * 3f
+                        c.chaseT = 0f; c.chaseIdx = -1; c.soliciting = false
+                        val refuge = Habitats.ZONES.filter { it.kind == sp.zone }
+                            .minByOrNull { (it.x - c.x) * (it.x - c.x) + (it.z - c.z) * (it.z - c.z) }
+                        val safe = refuge != null &&
+                            (refuge.x - c.x) * toX + (refuge.z - c.z) * toZ > 0f   // cover lies away from the human
+                        if (safe && refuge != null) { c.targetX = refuge.x; c.targetZ = refuge.z }
+                        else { c.targetX = (c.x + toX * 4f).coerceIn(0.8f, w - 0.8f); c.targetZ = (c.z + toZ * 2.5f).coerceIn(-2.4f, 1.6f) }
+                        c.targetT = 6f
+                        behaviorEvents.add(intArrayOf(BEV_FLEE, c.species, 0))
+                        audioEvents.add(intArrayOf(6, c.species))
+                        // Contagious flight (allelomimetic): kin scatter too.
+                        for (o in creatures) if (o !== c && !o.under && !o.releasing && !o.fleeing && !o.sleeping) {
+                            val d2 = (o.x - c.x) * (o.x - c.x) + (o.z - c.z) * (o.z - c.z)
+                            if (d2 < 6.25f && o.startleCd <= 0f) {
+                                o.fleeing = true; o.startleCd = 5f; o.chaseT = 0f
+                                val odx = o.x - camPX; val odz = o.z - camPZ
+                                val od = kotlin.math.sqrt(odx * odx + odz * odz).coerceAtLeast(0.001f)
+                                o.targetX = (o.x + odx / od * 3.5f).coerceIn(0.8f, w - 0.8f)
+                                o.targetZ = (o.z + odz / od * 2f).coerceIn(-2.4f, 1.6f); o.targetT = 6f
+                            }
+                        }
+                    } else if (distP < alertD && approach > -0.02f) {
+                        // ALERT — orient to and monitor the human; hold position.
+                        c.alert = true
+                        c.pauseT = maxOf(c.pauseT, 0.25f)
+                        val desired = Math.toDegrees(
+                            kotlin.math.atan2((-dxp).toDouble(), (-dzp).toDouble())).toFloat()
+                        val d = ((desired - c.headingDeg + 540f) % 360f) - 180f
+                        c.headingDeg = (c.headingDeg + d.coerceIn(-160f * dt, 160f * dt) + 360f) % 360f
+                        // Food conditioning: a calm, non-staring, familiar human is
+                        // approached and solicited by a food-associated creature.
+                        if (food > 0.45f && playerSpeed < 0.6f && gaze < 0.4f &&
+                            c.solicitCd <= 0f && distP < alertD * 0.95f) {
+                            c.soliciting = true; c.alert = false; c.pauseT = 0f
+                        }
+                    }
+                    if (c.soliciting) {
+                        if (playerSpeed > 1.2f || gaze > 0.75f) {   // the human moved or stared — abort
+                            c.soliciting = false; c.targetX = Float.NaN; c.solicitCd = 4f
+                        } else if (distP < 1.15f) {
+                            c.soliciting = false; c.targetX = Float.NaN; c.solicitCd = 8f
+                            c.happyT = maxOf(c.happyT, 1.4f)
+                            behaviorEvents.add(intArrayOf(BEV_SOLICIT, c.species, 0))
+                        } else {
+                            c.targetX = camPX.coerceIn(0.8f, w - 0.8f)
+                            c.targetZ = camPZ.coerceIn(-2.4f, 1.6f); c.targetT = 5f
+                        }
+                    }
+                    // The closest a member of this species tolerates, recorded.
+                    if (!c.fleeing && distP < 2f && closeCd <= 0f) {
+                        behaviorEvents.add(intArrayOf(BEV_CLOSE, c.species, (distP * 100f).toInt()))
+                        closeCd = 0.5f
+                    }
+                }
+                closeCd = (closeCd - dt).coerceAtLeast(0f)
+
                 // Playful chase: the zoomiest invite a friend to a race.
                 if (c.chaseT > 0f) {
                     c.chaseT -= dt
@@ -718,6 +853,7 @@ class DenRenderer : GLSurfaceView.Renderer {
                         }
                     }
                 } else if (sp.energy > 0.65f && sp.social > 0.4f && !c.homing &&
+                    !c.fleeing && !c.soliciting && !c.alert &&
                     Random.nextFloat() < dt * 0.02f && creatures.size > 1) {
                     var pick = Random.nextInt(creatures.size)
                     if (creatures[pick] === c) pick = (pick + 1) % creatures.size
@@ -749,7 +885,8 @@ class DenRenderer : GLSurfaceView.Renderer {
                         c.targetX = Float.NaN; c.lingerT = 3f + Random.nextFloat() * 3f
                     } else if (d >= 0.4f) {
                         val v = (0.5f + sp.energy * 0.7f) * (if (c.under) 2f else 1f) *
-                            (if (sp.motion == Species.SKIM) 1.8f else 1f) * (if (c.homing) 1.4f else 1f)
+                            (if (sp.motion == Species.SKIM) 1.8f else 1f) *
+                            (if (c.homing) 1.4f else 1f) * (if (c.fleeing) 2.4f else 1f)
                         c.vx = dx / d * v; c.vz = dz / d * v
                     }
                 } else if (c.chaseT <= 0f) {
@@ -804,8 +941,8 @@ class DenRenderer : GLSurfaceView.Renderer {
                     }
                 }
 
-                // Society.
-                if (!c.under && !c.sleeping) {
+                // Society — suspended while fleeing or soliciting the human.
+                if (!c.under && !c.sleeping && !c.fleeing && !c.soliciting) {
                     var nearest: DenC? = null; var nd = Float.MAX_VALUE
                     for (o in creatures) {
                         if (o === c || o.under || o.sleeping || o.releasing) continue

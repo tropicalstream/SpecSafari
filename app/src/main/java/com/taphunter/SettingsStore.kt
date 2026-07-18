@@ -97,6 +97,12 @@ class SettingsStore(context: Context) {
         get() = p.getString("bonds", "") ?: ""
         set(v) { p.edit().putString("bonds", v).apply() }
 
+    /** Field-history database, mirrored from the phone. One row per species,
+     *  "pets,treats,berries,startles,closestCm", rows joined by ';'. */
+    var fieldCsv: String
+        get() = p.getString("fieldDb", "") ?: ""
+        set(v) { p.edit().putString("fieldDb", v).apply() }
+
     /** The nuclear option, invoked from the phone hub's Reset Game. */
     fun wipe() { p.edit().clear().apply() }
 }

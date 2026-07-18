@@ -56,7 +56,7 @@ class DenAudio(context: Context) {
 
     // ------------------------------------------------- creature voices
 
-    /** kinds: 0 pet, 1 feed, 2 meet, 3 chase-end, 4 release, 5 wake */
+    /** kinds: 0 pet, 1 feed, 2 meet, 3 chase-end, 4 release, 5 wake, 6 alarm, 7 solicit */
     fun voice(species: Int, kind: Int) {
         if (released) return
         Thread {
@@ -71,6 +71,8 @@ class DenAudio(context: Context) {
                     2 -> floatArrayOf(1.2f, 1f)                        // hello there
                     3 -> floatArrayOf(1f, 1.33f, 1f, 1.33f)            // tag, you're it
                     4 -> floatArrayOf(1f, 1.25f, 1.5f, 2f)             // the farewell
+                    6 -> floatArrayOf(1.6f, 1.2f, 0.9f)               // alarm — a startled descent
+                    7 -> floatArrayOf(1.1f, 1.4f)                     // solicitation — hopeful
                     else -> floatArrayOf(0.8f, 1f)                     // a yawn, ascending
                 }
                 val sr = 22050

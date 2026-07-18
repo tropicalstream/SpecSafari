@@ -42,6 +42,8 @@ class DenActivity : Activity() {
     private lateinit var prefs: android.content.SharedPreferences
     private lateinit var mirror: android.content.SharedPreferences
     private var audio: DenAudio? = null
+    private lateinit var field: FieldLog
+    private var recordedThisVisit = false
 
     private var dex: JSONObject? = null
     private var walletText: TextView? = null
@@ -93,6 +95,56 @@ class DenActivity : Activity() {
         if (LocationBeamService.connected) LocationBeamService.sendLine("SET bond $species:$pts")
     }
 
+    // -------------------------------------------------- field history DB
+
+    private fun pushFieldStats() {
+        renderer.setFieldStats(field.habituationArray(), field.familiarityArray(), field.foodArray())
+    }
+
+    /** Beam the running totals to the glasses save for cross-device persistence. */
+    private fun beamField(species: Int) {
+        if (LocationBeamService.connected) LocationBeamService.sendLine("SET field ${field.beamLine(species)}")
+    }
+
+    private fun seedFieldFromDex() {
+        val d = dex ?: return
+        fun arr(k: String): IntArray? {
+            val a = d.optJSONArray(k) ?: return null
+            return IntArray(a.length()) { a.optInt(it) }
+        }
+        field.seedFrom(arr("flPets"), arr("flTreats"), arr("flBerries"),
+            arr("flStartles"), arr("flClosest"))
+    }
+
+    /** Log every resident present in the world once per visit, by habitat. */
+    private fun recordVisit() {
+        if (recordedThisVisit) return
+        recordedThisVisit = true
+        val seen = HashSet<Int>()
+        for (c in renderer.creatures) if (seen.add(c.species)) {
+            val biome = Habitats.BIOMES.indexOf(Habitats.biomeAt(c.x)).coerceAtLeast(0)
+            field.recordEncounter(c.species, biome)
+        }
+        pushFieldStats()
+    }
+
+    private fun drainBehavior() {
+        var changed = false
+        while (true) {
+            val ev = renderer.behaviorEvents.poll() ?: break
+            when (ev[0]) {
+                DenRenderer.BEV_FLEE -> { field.recordStartle(ev[1]); changed = true; beamField(ev[1]) }
+                DenRenderer.BEV_SOLICIT -> {
+                    field[ev[1]]   // ensure loaded
+                    audio?.voice(ev[1], 7)
+                    hint("${Species.ALL[ev[1]].name} EDGES CLOSER, HOPEFUL")
+                }
+                DenRenderer.BEV_CLOSE -> field.recordClosest(ev[1], ev[2])
+            }
+        }
+        if (changed) pushFieldStats()
+    }
+
     // ------------------------------------------------------------ state
 
     private fun population(): List<Int> {
@@ -131,7 +183,10 @@ class DenActivity : Activity() {
         actionBar?.hide()
         prefs = getSharedPreferences("den", Context.MODE_PRIVATE)
         mirror = getSharedPreferences("mirror", Context.MODE_PRIVATE)
+        field = FieldLog(prefs)
         refreshDex()
+        seedFieldFromDex()
+        pushFieldStats()
 
         renderer.configure(population(), placed())
         renderer.resetCamera()
@@ -227,14 +282,18 @@ class DenActivity : Activity() {
             prefs.edit().putInt("pouch_$armed", pouch(armed) - 1).apply()
             if (pouch(armed) <= 0) armedTreat = null
             pushBond(c.species, item.bondPts)
+            if (item.id == "honey" || item.id == "pudding") field.recordTreat(c.species)
+            else field.recordBerry(c.species)
+            beamField(c.species); pushFieldStats()
             renderer.celebrate(i, big = true)
             audio?.voice(c.species, 1)
-            hint("${sp.name} DEVOURED THE ${item.name}!")
+            hint("${sp.name} DEVOURED THE ${item.name}! (it will remember)")
         } else {
             val now = System.currentTimeMillis()
             if (now - (petAt[c.species] ?: 0L) > 8000L) {
                 petAt[c.species] = now
                 pushBond(c.species, 1)
+                field.recordPet(c.species); beamField(c.species); pushFieldStats()
             }
             renderer.celebrate(i, big = false)
             audio?.voice(c.species, 0)
@@ -467,7 +526,18 @@ class DenActivity : Activity() {
         infoName?.text = "${sp.name}${if (caught > 1) " ×$caught" else ""} · " +
             "the ${sp.temperament.lowercase()} one · " +
             "♥".repeat(hearts.coerceAtLeast(0)) + "♡".repeat((5 - hearts).coerceAtLeast(0))
-        infoLine?.text = if (c.sleeping) "Asleep in its nest. (${sp.niche.lowercase()})" else sp.nature
+        val rec = field[c.species]
+        val state = when {
+            c.sleeping -> "Asleep in its nest"
+            c.fleeing -> "Fleeing — you crossed its flight distance"
+            c.soliciting -> "Approaching you, hoping for a treat"
+            c.alert -> "Watching you warily"
+            else -> sp.nature
+        }
+        val note = if (rec.positive + rec.startles > 0)
+            "  ·  met ${rec.encounters}× · pet ${rec.pets} · fed ${rec.treats + rec.berries} · startled ${rec.startles}"
+        else ""
+        infoLine?.text = state + note
     }
 
     private fun hint(s: String) { hintText?.text = s }
@@ -542,10 +612,12 @@ class DenActivity : Activity() {
         }
     }
 
-    /** Fast pulse: creature voices and the ambience mix follow the walk. */
+    /** Fast pulse: creature voices, ambience mix, and behavior recording. */
     private val audioPump = object : Runnable {
         override fun run() {
             audio?.setListener(renderer.camPX)
+            recordVisit()
+            drainBehavior()
             while (true) {
                 val ev = renderer.audioEvents.poll() ?: break
                 val kind = when (ev[0]) {
