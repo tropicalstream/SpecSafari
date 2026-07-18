@@ -26,6 +26,7 @@ class DenC(val species: Int) {
     var bank = 0f                                 // lean into turns (fliers)
     var targetX = Float.NaN
     var targetZ = 0f
+    var targetT = 0f           // patience: give up on unreachable places
     var lingerT = 0f
     var under = false          // burrowers: traveling as a molehill
     var underT = 0f
@@ -126,6 +127,28 @@ class DenRenderer : GLSurfaceView.Renderer {
     private val sparklePts = ArrayList<FloatArray>()
     private val waterBodies = ArrayList<WaterBody>()
     private val ripples = ArrayList<Ripple>()
+    /** Solid things: x, z, radius. Nobody walks through wood or fire. */
+    private val obstacles = ArrayList<FloatArray>()
+
+    /** Push a point out of every solid it overlaps; returns corrected x,z. */
+    private fun resolve(px: Float, pz: Float, rad: Float): FloatArray {
+        var x = px; var z = pz
+        for (pass in 0 until 2) {
+            var moved = false
+            for (o in obstacles) {
+                val dx = x - o[0]; val dz = z - o[1]
+                val min = o[2] + rad
+                val d2 = dx * dx + dz * dz
+                if (d2 < min * min) {
+                    val d = kotlin.math.sqrt(d2).coerceAtLeast(0.001f)
+                    x = o[0] + dx / d * min; z = o[1] + dz / d * min
+                    moved = true
+                }
+            }
+            if (!moved) break
+        }
+        return floatArrayOf(x, z)
+    }
     private val proj = FloatArray(16); private val view = FloatArray(16)
     private val vp = FloatArray(16); private val model = FloatArray(16)
     @Volatile private var lastVp = FloatArray(16)
@@ -288,6 +311,11 @@ class DenRenderer : GLSurfaceView.Renderer {
             .coerceIn(0.4f, Habitats.WORLD_W - 0.4f)
         camPZ = (camPZ + (fwdZ * moveY + rightZ * moveX) * speed * dt)
             .coerceIn(-4.4f, 3.0f)
+        // The walker doesn't ghost through trees either.
+        if (glideX.isNaN()) {
+            val cf = resolve(camPX, camPZ, 0.32f)
+            camPX = cf[0]; camPZ = cf[1].coerceIn(-4.4f, 3.0f)
+        }
         val lookX = camPX + fwdX * cos(pitchR)
         val lookY = camPY + sin(pitchR)
         val lookZ = camPZ + fwdZ * cos(pitchR)
@@ -504,24 +532,71 @@ class DenRenderer : GLSurfaceView.Renderer {
         }
         for (biome in Habitats.BIOMES) biome.decor(b)
         sceneMesh = b.bake()
-        // Gather the elemental furniture: fires, lamps, waters, crystals.
+        // Gather the elemental furniture: fires, lamps, waters, crystals —
+        // and the collision map, so wood and fire are finally solid.
         flamePts.clear(); lanternPts.clear(); sparklePts.clear(); waterBodies.clear()
+        obstacles.clear()
         for (zone in Habitats.ZONES) when (zone.kind) {
             "WATER" -> waterBodies += WaterBody(zone.x, zone.z, zone.r,
                 warm = zone.x in 28f..41f)
             "EMBER" -> for (k in 0..3) {
                 val a = k * 1.57f + 0.4f
-                flamePts += floatArrayOf(zone.x + cos(a) * zone.r * 0.5f, 0.16f,
-                    zone.z + sin(a) * zone.r * 0.4f)
+                val px = zone.x + cos(a) * zone.r * 0.5f
+                val pz = zone.z + sin(a) * zone.r * 0.4f
+                flamePts += floatArrayOf(px, 0.16f, pz)
+                obstacles += floatArrayOf(px, pz, 0.3f)          // fire is not a path
+            }
+            "THICKET" -> {
+                obstacles += floatArrayOf(zone.x - zone.r * 0.5f, zone.z - 0.2f, 0.45f)
+                obstacles += floatArrayOf(zone.x + zone.r * 0.45f, zone.z + 0.15f, 0.4f)
+                obstacles += floatArrayOf(zone.x, zone.z + zone.r * 0.4f, 0.5f)
+                obstacles += floatArrayOf(zone.x - zone.r * 0.15f, zone.z - zone.r * 0.45f, 0.42f)
+            }
+            "STONE" -> {
+                obstacles += floatArrayOf(zone.x, zone.z, zone.r * 0.6f)
+                obstacles += floatArrayOf(zone.x + zone.r * 0.7f, zone.z - 0.2f, 0.4f)
+            }
+            "PERCH" -> obstacles += floatArrayOf(zone.x, zone.z, 0.28f)
+            "VOID" -> for (k in 0..4) {
+                val a = k * 1.257f
+                obstacles += floatArrayOf(zone.x + cos(a) * zone.r * 0.85f,
+                    zone.z + sin(a) * zone.r * 0.65f, 0.16f)
             }
         }
-        for (i in 0..4) lanternPts += floatArrayOf(29f + i * 2.8f, 1.2f, -2.6f)
-        for (i in 0..5) sparklePts += floatArrayOf(42f + i * 2.2f,
-            0.7f + (i % 3) * 0.3f, -2.8f - (i % 2) * 0.8f)
-        for ((i, id) in placedIds.withIndex()) when (id) {
-            "lantern" -> lanternPts += floatArrayOf(Habitats.slotX(i), 1.06f, Habitats.SLOT_Z)
-            "pool" -> waterBodies += WaterBody(Habitats.slotX(i), Habitats.SLOT_Z, 0.6f, warm = false)
-            "gems" -> sparklePts += floatArrayOf(Habitats.slotX(i), 0.35f, Habitats.SLOT_Z)
+        // Meadow pines, cove arches, hollow lantern row, shrine crystals.
+        for (i in 0..6) obstacles += floatArrayOf(1f + i * 1.9f + (i % 3) * 0.3f,
+            -2.9f - (i % 2) * 0.9f, 0.5f)
+        for (i in 0..2) {
+            val x = 16.5f + i * 4.4f
+            obstacles += floatArrayOf(x - 0.5f, -3.4f, 0.3f)
+            obstacles += floatArrayOf(x + 0.5f, -3.4f, 0.3f)
+        }
+        for (i in 0..4) {
+            lanternPts += floatArrayOf(29f + i * 2.8f, 1.2f, -2.6f)
+            obstacles += floatArrayOf(29f + i * 2.8f, -2.6f, 0.2f)
+        }
+        for (i in 0..5) {
+            sparklePts += floatArrayOf(42f + i * 2.2f,
+                0.7f + (i % 3) * 0.3f, -2.8f - (i % 2) * 0.8f)
+            obstacles += floatArrayOf(42f + i * 2.2f, -2.8f - (i % 2) * 0.8f, 0.42f)
+        }
+        for ((i, id) in placedIds.withIndex()) {
+            val sx = Habitats.slotX(i); val sz = Habitats.SLOT_Z
+            when (id) {
+                "lantern" -> {
+                    lanternPts += floatArrayOf(sx, 1.06f, sz)
+                    obstacles += floatArrayOf(sx, sz, 0.22f)
+                }
+                "pool" -> waterBodies += WaterBody(sx, sz, 0.6f, warm = false)
+                "gems" -> {
+                    sparklePts += floatArrayOf(sx, 0.35f, sz)
+                    obstacles += floatArrayOf(sx, sz, 0.35f)
+                }
+                "bush" -> obstacles += floatArrayOf(sx, sz, 0.5f)
+                "nook" -> obstacles += floatArrayOf(sx, sz, 0.5f)
+                "drum" -> obstacles += floatArrayOf(sx, sz, 0.4f)
+                "plinth" -> obstacles += floatArrayOf(sx, sz, 0.3f)
+            }
         }
         itemMeshes = placedIds.mapIndexedNotNull { i, id ->
             Habitats.item(id)?.let { item ->
@@ -547,8 +622,13 @@ class DenRenderer : GLSurfaceView.Renderer {
                     } else {
                         nestX = 2f + Random.nextFloat() * (w - 4f); nestZ = 0f
                     }
+                    // Nobody nests inside a tree; nudge the nest into the clear.
+                    val nf = resolve(nestX, nestZ, 0.35f)
+                    nestX = nf[0]; nestZ = nf[1].coerceIn(-2.4f, 1.6f)
                     x = nestX + Random.nextFloat() * 2f - 1f
                     z = (nestZ + Random.nextFloat() - 0.5f).coerceIn(-2.4f, 1.6f)
+                    val sf = resolve(x, z, 0.25f)
+                    x = sf[0]; z = sf[1].coerceIn(-2.4f, 1.6f)
                 }
             }
         }
@@ -599,7 +679,9 @@ class DenRenderer : GLSurfaceView.Renderer {
                 // at night, the nocturnal tire in daylight.
                 val offHours = if (c.species in nocturnal) dayLerp() else 1f - dayLerp()
                 c.awakeT -= dt * (1f + offHours * 1.2f)
-                if (c.awakeT <= 0f && !c.homing) { c.homing = true; c.targetX = c.nestX; c.targetZ = c.nestZ }
+                if (c.awakeT <= 0f && !c.homing) {
+                    c.homing = true; c.targetX = c.nestX; c.targetZ = c.nestZ; c.targetT = 14f
+                }
                 if (c.homing && abs(c.x - c.nestX) < 0.4f && abs(c.z - c.nestZ) < 0.4f) {
                     c.homing = false
                     c.sleeping = true
@@ -652,9 +734,18 @@ class DenRenderer : GLSurfaceView.Renderer {
                     c.pauseT -= dt
                     c.vx *= 0.85f; c.vz *= 0.85f
                 } else if (!c.targetX.isNaN()) {
+                    // Patience runs out at blocked doorways: shrug, settle here.
+                    c.targetT -= dt
+                    if (c.targetT <= 0f) {
+                        c.targetX = Float.NaN
+                        if (c.homing) { c.homing = false; c.sleeping = true
+                            c.awakeT = (10f + Random.nextFloat() * 10f) * (1.6f - sp.energy) }
+                        else c.lingerT = 2f
+                    }
                     val dx = c.targetX - c.x; val dz = c.targetZ - c.z
                     val d = kotlin.math.sqrt(dx * dx + dz * dz)
-                    if (d < 0.45f && !c.homing) {
+                    if (c.targetX.isNaN()) { /* patience spent this frame */ }
+                    else if (d < 0.45f && !c.homing) {
                         c.targetX = Float.NaN; c.lingerT = 3f + Random.nextFloat() * 3f
                     } else if (d >= 0.4f) {
                         val v = (0.5f + sp.energy * 0.7f) * (if (c.under) 2f else 1f) *
@@ -695,6 +786,7 @@ class DenRenderer : GLSurfaceView.Renderer {
                             val item = Habitats.item(id) ?: continue
                             if (sp.temperament in item.loved) {
                                 c.targetX = Habitats.slotX(i); c.targetZ = Habitats.SLOT_Z + 0.5f
+                                c.targetT = 10f
                                 found = true; break
                             }
                         }
@@ -706,6 +798,7 @@ class DenRenderer : GLSurfaceView.Renderer {
                                 val a = Random.nextFloat() * 6.283f
                                 c.targetX = zn.x + cos(a) * zn.r * 0.5f
                                 c.targetZ = (zn.z + sin(a) * zn.r * 0.4f).coerceIn(-2.4f, 1.6f)
+                                c.targetT = 10f
                             }
                         }
                     }
@@ -742,6 +835,14 @@ class DenRenderer : GLSurfaceView.Renderer {
 
                 c.x = (c.x + c.vx * dt).coerceIn(0.8f, w - 0.8f)
                 c.z = (c.z + c.vz * dt).coerceIn(-2.4f, 1.6f)
+                // Solids are solid — unless you're a mole in the underworld.
+                if (!c.under) {
+                    val fixed = resolve(c.x, c.z, 0.24f * c.scale)
+                    if (fixed[0] != c.x || fixed[1] != c.z) {
+                        c.x = fixed[0]; c.z = fixed[1]
+                        c.vx *= 0.4f; c.vz *= 0.4f   // bumping into things is humbling
+                    }
+                }
                 // Water physics: a splash going in, bow ripples while moving.
                 if (!c.under) {
                     val wading = waterAt(c.x, c.z) != null
