@@ -50,6 +50,7 @@ class Renderer(private val g: GameEngine) {
             State.LOOT -> drawLoot(c, w, h, t)
             State.HUB -> drawMenu(c, w, h, "TAPHUNTER",
                 (0 until g.hubRowCount()).map { g.hubRow(it) to "" })
+            State.DEN -> drawDen(c, w, h, t)
             State.BOX -> drawBox(c, w, h, t)
             State.UPGRADE -> drawUpgrade(c, w, h)
             State.SETTINGS -> drawMenu(c, w, h, "SETTINGS",
@@ -73,14 +74,15 @@ class Renderer(private val g: GameEngine) {
         small.textAlign = Paint.Align.CENTER
         c.drawText("THE REALM IS YOUR NEIGHBORHOOD", cx, h * 0.28f, small)
 
-        // A parade of the twelve, marching in a slow circle.
-        for (i in 0 until 12) {
-            val a = t * 0.4f + i * (Math.PI.toFloat() * 2f / 12f)
-            val px = cx + cos(a) * w * 0.32f
-            val py = h * 0.52f + sin(a) * h * 0.16f
-            Sprites.creature(c, i, px, py, 9f, t + i, excited = false)
+        // A parade of all twenty-four, marching in a slow circle.
+        val n = Species.ALL.size
+        for (i in 0 until n) {
+            val a = t * 0.4f + i * (Math.PI.toFloat() * 2f / n)
+            val px = cx + cos(a) * w * 0.34f
+            val py = h * 0.52f + sin(a) * h * 0.17f
+            Sprites.creature(c, i, px, py, 7f, t + i, excited = false)
         }
-        Sprites.creature(c, (t / 3f).toInt() % 12, cx, h * 0.52f, 22f, t, excited = true)
+        Sprites.creature(c, (t / 3f).toInt() % n, cx, h * 0.52f, 22f, t, excited = true)
 
         val blink = (sin(t * 4f) + 1f) / 2f
         body.textAlign = Paint.Align.CENTER
@@ -188,6 +190,84 @@ class Renderer(private val g: GameEngine) {
             small.color = Color.rgb(180, 220, 245)
         }
         small.textSize = 13f
+
+        // Trail finds announce themselves under the disc.
+        if (g.toastT > 0f) {
+            accent.textAlign = Paint.Align.CENTER
+            accent.color = Color.argb((255 * (g.toastT / 4f).coerceAtMost(1f)).toInt(), 255, 160, 220)
+            accent.drawScaled(c, g.toastText, map.lastCx, map.lastCy + map.lastRadius + 22f,
+                map.lastRadius * 2f)
+            accent.color = Color.rgb(255, 220, 90)
+            accent.textAlign = Paint.Align.LEFT
+        }
+    }
+
+    private fun drawDen(c: Canvas, w: Int, h: Int, t: Float) {
+        g.denW = w.toFloat(); g.denH = h.toFloat()
+        head.textAlign = Paint.Align.CENTER
+        c.drawText("CREATURE DEN", w / 2f, 30f, head)
+        if (g.denPets.isEmpty()) {
+            body.textAlign = Paint.Align.CENTER
+            c.drawText("CATCH A CREATURE FIRST -", w / 2f, h * 0.45f, body)
+            c.drawText("THE DEN AWAITS ITS RESIDENTS", w / 2f, h * 0.52f, body)
+            return
+        }
+        // A soft meadow floor line so the den feels like a place.
+        strokeP.color = Color.argb(60, 140, 255, 190); strokeP.strokeWidth = 2f
+        c.drawLine(16f, h - 84f, w - 16f, h - 84f, strokeP)
+
+        val sel = g.denPets.getOrNull(g.denSel)
+        for (pet in g.denPets) {
+            val excited = pet.happyT > 0f
+            if (pet === sel) {
+                strokeP.color = Color.rgb(255, 255, 255); strokeP.strokeWidth = 2f
+                c.drawCircle(pet.x, pet.y, 26f + sin(t * 4f) * 2f, strokeP)
+            }
+            Sprites.creature(c, pet.species, pet.x, pet.y, 13f, t + pet.phase, excited)
+            if (excited) {
+                // Hearts float up while the joy lasts.
+                body.textAlign = Paint.Align.CENTER
+                body.color = Color.rgb(255, 120, 190)
+                val rise = (2.2f - pet.happyT) * 14f
+                c.drawText("♥", pet.x - 10f, pet.y - 24f - rise, body)
+                if (pet.happyT > 1f) c.drawText("♥", pet.x + 12f, pet.y - 30f - rise * 0.7f, body)
+                body.color = Color.rgb(235, 245, 255)
+            }
+        }
+
+        // The selected resident introduces itself.
+        sel?.let { pet ->
+            val sp = Species.ALL[pet.species]
+            head.textSize = 15f
+            head.color = sp.main
+            head.textAlign = Paint.Align.LEFT
+            c.drawText(sp.name, 14f, 56f, head)
+            head.color = Color.rgb(140, 255, 210)
+            head.textSize = 20f
+            small.textAlign = Paint.Align.LEFT
+            small.color = Color.rgb(255, 220, 90)
+            var hearts = ""
+            for (i in 0 until 5) hearts += if (i < g.bondHearts(pet.species)) "♥" else "♡"
+            c.drawText("THE ${sp.temperament} ONE  $hearts", 14f, 72f, small)
+            small.color = Color.rgb(180, 220, 245)
+            small.drawScaled(c, sp.nature, 14f, 88f, w - 28f)
+        }
+
+        // Pantry and hints.
+        small.textAlign = Paint.Align.LEFT
+        fill.color = Color.rgb(255, 120, 190)
+        c.drawCircle(18f, h - 66f, 5f, fill)
+        c.drawText("x${g.berries} BERRIES", 28f, h - 62f, small)
+        Sprites.gem(c, 110f, h - 66f, 5f)
+        c.drawText("${g.essence}", 120f, h - 62f, small)
+        small.textAlign = Paint.Align.CENTER
+        c.drawText("TAP PET · SWIPE UP BERRY · DOWN TREAT(5)", w / 2f, h - 40f, small)
+        c.drawText("LEFT/RIGHT CHOOSE · DOUBLE-TAP BACK", w / 2f, h - 24f, small)
+        if (g.toastT > 0f) {
+            accent.textAlign = Paint.Align.CENTER
+            c.drawText(g.toastText, w / 2f, h - 100f, accent)
+            accent.textAlign = Paint.Align.LEFT
+        }
     }
 
     /** Greedy word wrap into at most maxLines lines of maxW pixels. */
@@ -366,7 +446,9 @@ class Renderer(private val g: GameEngine) {
             small.textAlign = Paint.Align.LEFT
             c.drawText(Species.ALL[species].habitat, 62f, y + 14f, small)
             accent.textAlign = Paint.Align.RIGHT
-            c.drawText("x$count  L$best", w - 16f, y + 4f, accent)
+            val hearts = g.bondHearts(species)
+            c.drawText((if (hearts > 0) "♥".repeat(hearts) + " " else "") + "x$count  L$best",
+                w - 16f, y + 4f, accent)
             accent.textAlign = Paint.Align.CENTER
         }
         if (lines.size > visible) {

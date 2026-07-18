@@ -103,8 +103,113 @@ object HologramModels {
                 b.whiskers(sp.accent)
                 b.eyes(sp.accent)
             }
-            else -> { // PRISMKIN — rotating crystal
+            11 -> { // PRISMKIN — rotating crystal
                 b.crystal(sp.main, sp.accent)
+            }
+            12 -> { // WISPLET
+                b.sphere(0f, 0.1f, 0.55f, sp.main)
+                b.flame(0f, 0.55f, 0.5f, sp.accent)
+                b.ring(0f, -0.65f, 0f, 0.4f, 0.4f, Builder.XZ, sp.main)
+                b.ring(0f, -1.0f, 0f, 0.22f, 0.22f, Builder.XZ, sp.main)
+                b.eyes(sp.accent)
+            }
+            13 -> { // MOONHARE
+                b.sphere(0f, -0.15f, 0.6f, sp.main)
+                b.seg(-0.3f, 0.4f, 0f, -0.42f, 1.35f, 0f, sp.main)
+                b.seg(-0.12f, 0.45f, 0f, -0.22f, 1.35f, 0f, sp.main)
+                b.seg(-0.42f, 1.35f, 0f, -0.22f, 1.35f, 0f, sp.accent)
+                b.seg(0.3f, 0.4f, 0f, 0.42f, 1.35f, 0f, sp.main)
+                b.seg(0.12f, 0.45f, 0f, 0.22f, 1.35f, 0f, sp.main)
+                b.seg(0.42f, 1.35f, 0f, 0.22f, 1.35f, 0f, sp.accent)
+                b.eyes(sp.accent)
+            }
+            14 -> { // KELPLING
+                b.sphere(0f, -0.1f, 0.62f, sp.main)
+                for (k in 0..3) {
+                    val px = -0.5f + k * 0.33f
+                    b.seg(px, 0.5f, 0f, px + 0.15f, 0.95f - k * 0.1f, 0f, sp.accent)
+                }
+                b.ring(0f, -0.45f, 0.5f, 0.22f, 0.16f, Builder.XY, sp.accent)
+                b.eyes(sp.accent)
+            }
+            15 -> { // PUCKLE
+                b.sphere(0f, -0.2f, 0.6f, sp.main)
+                b.ring(0f, 0.25f, 0f, 0.72f, 0.72f, Builder.XZ, sp.accent)
+                for (q in 0 until 4) {
+                    val a = (q / 4f) * (Math.PI * 2).toFloat()
+                    b.seg(cos(a) * 0.72f, 0.25f, sin(a) * 0.72f, 0f, 1.25f, 0f, sp.accent)
+                }
+                b.eyes(sp.accent)
+            }
+            16 -> { // DREAMBAKU
+                b.sphere(0f, 0f, 0.65f, sp.main)
+                b.seg(0f, -0.1f, 0.6f, 0.3f, -0.5f, 0.65f, sp.accent)
+                b.seg(0.3f, -0.5f, 0.65f, 0.2f, -0.85f, 0.6f, sp.accent)
+                b.ear(-0.5f, 0.55f, 0.35f, sp.accent)
+                b.ear(0.5f, 0.55f, 0.35f, sp.accent)
+                b.seg(-0.4f, 0.1f, 0.6f, -0.15f, 0.1f, 0.62f, sp.accent)
+                b.seg(0.15f, 0.1f, 0.62f, 0.4f, 0.1f, 0.6f, sp.accent)
+            }
+            17 -> { // GLIMMERFOX
+                b.sphere(0f, 0f, 0.62f, sp.main)
+                b.ear(-0.42f, 0.55f, 0.45f, sp.main)
+                b.ear(0.42f, 0.55f, 0.45f, sp.main)
+                b.tail(sp.main)
+                b.seg(-0.6f, -0.35f, -0.2f, -0.95f, 0.1f, -0.35f, sp.main)
+                b.seg(-0.95f, 0.1f, -0.35f, -0.8f, 0.55f, -0.4f, sp.accent)
+                b.eyes(sp.accent)
+            }
+            18 -> { // GEMBACK
+                b.sphere(0f, -0.15f, 0.6f, sp.main)
+                b.seg(0f, 0.5f, 0f, 0.35f, 0.85f, 0f, sp.accent)
+                b.seg(0.35f, 0.85f, 0f, 0f, 1.25f, 0f, sp.accent)
+                b.seg(0f, 1.25f, 0f, -0.35f, 0.85f, 0f, sp.accent)
+                b.seg(-0.35f, 0.85f, 0f, 0f, 0.5f, 0f, sp.accent)
+                b.eyes(sp.accent)
+            }
+            19 -> { // CLAYWARD
+                b.prismBody(sp.main)
+                b.seg(-0.72f, 0f, 0f, -1.15f, -0.3f, 0f, sp.accent)
+                b.seg(0.72f, 0f, 0f, 1.15f, -0.3f, 0f, sp.accent)
+                b.ring(-0.24f, 0.15f, 0.35f, 0.1f, 0.1f, Builder.XY, sp.accent, 8)
+                b.ring(0.24f, 0.15f, 0.35f, 0.1f, 0.1f, Builder.XY, sp.accent, 8)
+            }
+            20 -> { // SKYDRUM
+                b.sphere(0f, 0f, 0.58f, sp.main)
+                b.wingSwept(-1f, sp.main)
+                b.wingSwept(1f, sp.main)
+                b.seg(-0.15f, 0.2f, 0.55f, 0.1f, -0.05f, 0.58f, sp.accent)
+                b.seg(0.1f, -0.05f, 0.58f, -0.1f, -0.15f, 0.58f, sp.accent)
+                b.seg(-0.1f, -0.15f, 0.58f, 0.15f, -0.45f, 0.55f, sp.accent)
+                b.beak(sp.accent)
+                b.eyes(sp.accent)
+            }
+            21 -> { // PYREBIRD
+                b.sphere(0f, -0.1f, 0.55f, sp.main)
+                b.flame(0f, 0.45f, 0.55f, sp.accent)
+                b.flame(-0.4f, 0.35f, 0.35f, sp.main)
+                b.flame(0.4f, 0.35f, 0.35f, sp.main)
+                b.wing(-1f, sp.accent, sp.main)
+                b.wing(1f, sp.accent, sp.main)
+                b.flame(0f, -1.05f, 0.35f, sp.accent)
+                b.beak(sp.accent)
+                b.eyes(sp.accent)
+            }
+            22 -> { // HORNHOP
+                b.sphere(0f, -0.15f, 0.6f, sp.main)
+                b.seg(-0.25f, 0.4f, 0f, -0.35f, 1.2f, 0f, sp.main)
+                b.seg(0.25f, 0.4f, 0f, 0.35f, 1.2f, 0f, sp.main)
+                b.seg(-0.4f, 0.5f, 0f, -0.75f, 1.05f, 0f, sp.accent)
+                b.seg(-0.75f, 1.05f, 0f, -1.0f, 0.95f, 0f, sp.accent)
+                b.seg(0.4f, 0.5f, 0f, 0.75f, 1.05f, 0f, sp.accent)
+                b.seg(0.75f, 1.05f, 0f, 1.0f, 0.95f, 0f, sp.accent)
+                b.eyes(sp.accent)
+            }
+            else -> { // SANDSHIFT
+                b.sphere(0f, 0.25f, 0.55f, sp.main)
+                b.lathe(floatArrayOf(-1.1f, 0.12f, -0.75f, 0.3f, -0.4f, 0.45f, -0.1f, 0.35f), sp.main)
+                b.ring(0f, 0.25f, 0f, 0.95f, 0.95f, Builder.XZ, sp.accent)
+                b.eyes(sp.accent)
             }
         }
         val arr = b.data.toFloatArray()

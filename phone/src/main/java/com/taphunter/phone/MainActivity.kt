@@ -243,12 +243,15 @@ class MainActivity : Activity() {
         val d = dex
         val counts = d?.optJSONArray("counts")
         val best = d?.optJSONArray("best")
+        val bonds = d?.optJSONArray("bonds")
         val discovered = (0 until Species.ALL.size).count { (counts?.optInt(it) ?: 0) > 0 }
         val headerCard = card().apply {
             addView(text("HunterDex", 19f, gold, bold = true, serif = true))
             addView(text(
                 "$discovered of ${Species.ALL.size} creatures discovered. " +
-                    "Each haunts a kind of real place — walk there and they come.",
+                    "Each haunts a kind of real place — walk there and they come. " +
+                    "Bond with them in the den: pet, feed berries from the trail, " +
+                    "spoil with treats.",
                 13.5f, parchment))
         }
         val cards = mutableListOf<View>(headerCard)
@@ -256,6 +259,8 @@ class MainActivity : Activity() {
             val sp = Species.ALL[i]
             val count = counts?.optInt(i) ?: 0
             val bestL = best?.optInt(i) ?: 0
+            val bondPts = bonds?.optInt(i) ?: 0
+            val hearts = intArrayOf(0, 5, 12, 25, 45, 70).count { bondPts >= it } - 1
             val known = count > 0
             val c = card()
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -269,13 +274,19 @@ class MainActivity : Activity() {
                 16f, if (known) Color.WHITE else dim, bold = true, serif = true))
             info.addView(text(sp.habitat, 12f, teal, bold = true))
             if (known) {
-                info.addView(text("Caught ×$count · best L$bestL", 12.5f, gold))
+                info.addView(text("The ${sp.temperament.lowercase().replaceFirstChar { it.uppercase() }} one",
+                    12f, Color.rgb(255, 160, 220), bold = true))
+                info.addView(text(
+                    "Caught ×$count · best L$bestL · " +
+                        "♥".repeat(hearts.coerceAtLeast(0)) + "♡".repeat((5 - hearts).coerceAtLeast(0)),
+                    12.5f, gold))
             }
             row.addView(info, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             c.addView(row)
             c.addView(text(
                 if (known) sp.lore else "Not yet discovered. Its haunt is listed — go look.",
                 13f, if (known) parchment else dim).apply { setPadding(0, dp(8), 0, 0) })
+            if (known) c.addView(text("“${sp.nature}”", 12.5f, dim).apply { setPadding(0, dp(4), 0, 0) })
             cards.add(c)
         }
         return scroll(*cards.toTypedArray())

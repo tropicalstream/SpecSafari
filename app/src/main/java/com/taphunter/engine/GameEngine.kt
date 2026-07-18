@@ -17,7 +17,17 @@ interface Host {
     fun applySettings()
 }
 
-enum class State { TITLE, ACQUIRE, HUNT, ENGAGE, RESULT, LOOT, HUB, BOX, UPGRADE, SETTINGS }
+enum class State { TITLE, ACQUIRE, HUNT, ENGAGE, RESULT, LOOT, HUB, DEN, BOX, UPGRADE, SETTINGS }
+
+/** One creature at home in the den, wandering to its own temperament. */
+class DenPet(val species: Int) {
+    var x = 0f; var y = 0f
+    var vx = 0f; var vy = 0f
+    var phase = 0f          // gait animation
+    var pauseT = 0f         // standing around, thinking creature thoughts
+    var happyT = 0f         // hearts and wiggles after affection/meetings
+    var meetCd = 0f         // between social interactions
+}
 
 /** One caught creature in the box. */
 class BoxEntry(val species: Int, val level: Int, val at: Long)
@@ -101,9 +111,48 @@ class GameEngine(
     val essence get() = store.essence
     fun tier(track: Int) = store.upgradeTier(track)
 
-    private val hubRows = arrayOf("RETURN TO HUNT", "CREATURE BOX", "UPGRADES", "SETTINGS")
+    private val hubRows = arrayOf("RETURN TO HUNT", "CREATURE DEN", "CREATURE BOX", "UPGRADES", "SETTINGS")
     fun hubRowCount() = hubRows.size
     fun hubRow(i: Int) = hubRows[i]
+
+    // ------------------------------------------------------- den + bonds
+    val denPets = mutableListOf<DenPet>()
+    var denSel = 0; private set
+    var denW = 320f; var denH = 480f          // arena, set by the renderer
+    var berries
+        get() = store.berries
+        private set(v) { store.berries = v }
+    private var bonds = IntArray(Species.ALL.size)
+    private var bondsLoaded = false
+    private var nextBerryAtM = Float.MAX_VALUE
+    var toastText = ""; private set
+    var toastT = 0f; private set
+
+    private val BERRY_NAMES = arrayOf("MOONBERRY", "EMBERBERRY", "MISTBERRY", "SUNBERRY", "DUSKBERRY")
+    private val HEART_STEPS = intArrayOf(0, 5, 12, 25, 45, 70)
+
+    private fun loadBonds() {
+        if (bondsLoaded) return
+        bondsLoaded = true
+        val parts = store.bondCsv.split(',')
+        for (i in bonds.indices) bonds[i] = parts.getOrNull(i)?.toIntOrNull() ?: 0
+    }
+
+    fun bondPoints(species: Int): Int { loadBonds(); return bonds[species.coerceIn(0, bonds.size - 1)] }
+
+    /** 0..5 hearts, the den's currency of affection. */
+    fun bondHearts(species: Int): Int {
+        val pts = bondPoints(species)
+        var h = 0
+        for (i in HEART_STEPS.indices) if (pts >= HEART_STEPS[i]) h = i
+        return h
+    }
+
+    private fun addBond(species: Int, pts: Int) {
+        loadBonds()
+        bonds[species] += pts
+        store.bondCsv = bonds.joinToString(",")
+    }
 
     // Settings rows: SBS last per suite convention (x3 menu rule).
     private val settingsRows = arrayOf(
@@ -164,6 +213,8 @@ class GameEngine(
     fun update(dt: Float) {
         stateT += dt
         pingT = (pingT - dt).coerceAtLeast(0f)
+        toastT = (toastT - dt).coerceAtLeast(0f)
+        if (state == State.DEN) updateDen(dt)
         when (state) {
             State.ACQUIRE -> {
                 player?.let { p ->
@@ -178,6 +229,10 @@ class GameEngine(
                                 false, 0, 1, "A WAYSIDE CACHE", 0L
                             )
                         }
+                        // The trail provides: a berry every 500-1000 m walked.
+                        nextBerryAtM = sessionWalkedM +
+                            (if (demo) 40f + Random.nextFloat() * 40f
+                            else 500f + Random.nextFloat() * 500f)
                         host.sound(Audio.LOCK)
                         host.sound(Audio.TARGET)
                         switch(State.HUNT)
@@ -218,6 +273,17 @@ class GameEngine(
                         host.sound(Audio.NEAR)
                     }
                 } else nearAnnounced = false
+                // Berries underfoot.
+                if (sessionWalkedM >= nextBerryAtM) {
+                    nextBerryAtM = sessionWalkedM +
+                        (if (demo) 40f + Random.nextFloat() * 40f
+                        else 500f + Random.nextFloat() * 500f)
+                    berries += 1
+                    toastText = "FOUND A ${BERRY_NAMES[Random.nextInt(BERRY_NAMES.size)]}!"
+                    toastT = 4f
+                    host.sound(Audio.ESSENCE, 1.2f)
+                    host.sound(Audio.TARGET, 1.3f, 0.6f)
+                }
                 if (demo) demoWalk(dt, p)
             }
             State.ENGAGE -> {
@@ -252,6 +318,7 @@ class GameEngine(
             State.RESULT -> switch(State.HUNT)
             State.LOOT -> switch(State.HUNT)
             State.HUB -> hubActivate()
+            State.DEN -> petSelected()
             State.BOX -> {}
             State.UPGRADE -> buySelected()
             State.SETTINGS -> adjustSetting(+1)
@@ -265,7 +332,7 @@ class GameEngine(
                 host.sound(Audio.BACK); engageTarget = null; switch(State.HUNT)
             }
             State.HUB -> { host.sound(Audio.BACK); switch(State.HUNT) }
-            State.BOX, State.UPGRADE, State.SETTINGS -> {
+            State.DEN, State.BOX, State.UPGRADE, State.SETTINGS -> {
                 host.sound(Audio.BACK); menuIdx = 0; switch(State.HUB)
             }
             State.RESULT, State.LOOT -> switch(State.HUNT)
@@ -298,6 +365,12 @@ class GameEngine(
                 val rows = boxLines().size
                 if (dir == 1) boxScroll = (boxScroll + 1).coerceAtMost((rows - 6).coerceAtLeast(0))
                 if (dir == 0) boxScroll = (boxScroll - 1).coerceAtLeast(0)
+            }
+            State.DEN -> when (dir) {
+                2 -> cycleDen(-1)
+                3 -> cycleDen(+1)
+                0 -> feedSelected(berry = true)
+                1 -> feedSelected(berry = false)
             }
             else -> {}
         }
@@ -353,7 +426,8 @@ class GameEngine(
     private fun startEngage(c: Spawn) {
         engageTarget = c
         hits = 0; misses = 0
-        zoneWidth = (64f * (1f + 0.12f * tier(UPG_ORB)))
+        // A bonded species trusts you: each heart widens the arc 3%.
+        zoneWidth = (64f * (1f + 0.12f * tier(UPG_ORB)) * (1f + 0.03f * bondHearts(c.species)))
         zoneCenter = Random.nextFloat() * 360f
         pulseDeg = (zoneCenter + 180f) % 360f
         pulseSpeed = (140f + c.level * 6f) * (1f - 0.06f * tier(UPG_ORB))
@@ -425,10 +499,125 @@ class GameEngine(
         host.sound(Audio.SELECT)
         when (menuIdx) {
             0 -> switch(State.HUNT)
-            1 -> { boxScroll = 0; switch(State.BOX) }
-            2 -> { menuIdx = 0; switch(State.UPGRADE) }
-            3 -> { menuIdx = 0; switch(State.SETTINGS) }
+            1 -> enterDen()
+            2 -> { boxScroll = 0; switch(State.BOX) }
+            3 -> { menuIdx = 0; switch(State.UPGRADE) }
+            4 -> { menuIdx = 0; switch(State.SETTINGS) }
         }
+    }
+
+    // --------------------------------------------------------------- den
+
+    private fun enterDen() {
+        denPets.clear()
+        // One representative of every caught species wanders in, most-bonded first.
+        val species = boxLines().map { it.first }.sortedByDescending { bondPoints(it) }.take(10)
+        for (s in species) {
+            denPets += DenPet(s).apply {
+                x = 40f + Random.nextFloat() * (denW - 80f)
+                y = 110f + Random.nextFloat() * (denH - 220f)
+                phase = Random.nextFloat() * 6f
+            }
+        }
+        denSel = 0
+        switch(State.DEN)
+    }
+
+    private fun updateDen(dt: Float) {
+        val left = 26f; val right = denW - 26f
+        val top = 100f; val bottom = denH - 90f
+        for ((i, pet) in denPets.withIndex()) {
+            val sp = Species.ALL[pet.species]
+            pet.phase += dt * (1f + sp.energy * 2f)
+            pet.happyT = (pet.happyT - dt).coerceAtLeast(0f)
+            pet.meetCd = (pet.meetCd - dt).coerceAtLeast(0f)
+            if (pet.pauseT > 0f) {
+                pet.pauseT -= dt
+                pet.vx *= 0.85f; pet.vy *= 0.85f
+            } else {
+                // Temperament is the whole physics engine.
+                val speed = 8f + sp.energy * 34f
+                when (sp.motion) {
+                    Species.DART -> if (Random.nextFloat() < dt * sp.energy * 1.4f) {
+                        val a = Random.nextFloat() * 6.283f
+                        pet.vx = kotlin.math.cos(a) * speed * 2f
+                        pet.vy = kotlin.math.sin(a) * speed * 2f
+                        pet.pauseT = 0.5f + Random.nextFloat()
+                    }
+                    Species.HOP -> if (Random.nextFloat() < dt * 1.8f) {
+                        val a = Random.nextFloat() * 6.283f
+                        pet.vx = kotlin.math.cos(a) * speed * 1.4f
+                        pet.vy = kotlin.math.sin(a) * speed * 1.4f
+                        pet.pauseT = 0.35f
+                    }
+                    else -> {
+                        val a = pet.phase * (0.3f + sp.energy * 0.4f)
+                        pet.vx += (kotlin.math.cos(a) * speed - pet.vx) * dt
+                        pet.vy += (kotlin.math.sin(a * 0.7f) * speed * 0.6f - pet.vy) * dt
+                        if (Random.nextFloat() < dt * (1f - sp.energy)) pet.pauseT = 1f + Random.nextFloat() * 2f
+                    }
+                }
+                // The gregarious drift together; loners keep their distance.
+                var nearest: DenPet? = null; var nd = Float.MAX_VALUE
+                for (o in denPets) {
+                    if (o === pet) continue
+                    val dx = o.x - pet.x; val dy = o.y - pet.y
+                    val d2 = dx * dx + dy * dy
+                    if (d2 < nd) { nd = d2; nearest = o }
+                }
+                nearest?.let { o ->
+                    val d = kotlin.math.sqrt(nd)
+                    val pull = (sp.social - 0.35f) * 14f
+                    if (d > 1f) {
+                        pet.vx += (o.x - pet.x) / d * pull * dt * 8f
+                        pet.vy += (o.y - pet.y) / d * pull * dt * 8f
+                    }
+                    // A meeting: hearts, chirps, and a polite step apart.
+                    if (d < 34f && pet.meetCd <= 0f && o.meetCd <= 0f) {
+                        pet.meetCd = 6f; o.meetCd = 6f
+                        pet.happyT = 1.6f; o.happyT = 1.6f
+                        host.sound(Audio.SELECT, 1.5f, 0.4f)
+                        pet.vx -= (o.x - pet.x) * 0.4f; pet.vy -= (o.y - pet.y) * 0.4f
+                    }
+                }
+            }
+            pet.x = (pet.x + pet.vx * dt).coerceIn(left, right)
+            pet.y = (pet.y + pet.vy * dt).coerceIn(top, bottom)
+            if (pet.x <= left || pet.x >= right) pet.vx = -pet.vx
+            if (pet.y <= top || pet.y >= bottom) pet.vy = -pet.vy
+        }
+        if (denSel >= denPets.size) denSel = 0
+    }
+
+    private fun cycleDen(step: Int) {
+        if (denPets.isEmpty()) return
+        denSel = ((denSel + step) % denPets.size + denPets.size) % denPets.size
+        host.sound(Audio.SELECT, 1.1f, 0.5f)
+    }
+
+    private fun petSelected() {
+        val pet = denPets.getOrNull(denSel) ?: return
+        pet.happyT = 2.2f
+        addBond(pet.species, 1)
+        host.sound(Audio.ESSENCE, 1.4f, 0.8f)
+    }
+
+    private fun feedSelected(berry: Boolean) {
+        val pet = denPets.getOrNull(denSel) ?: return
+        if (berry) {
+            if (berries <= 0) { host.sound(Audio.DENY); return }
+            berries -= 1
+            addBond(pet.species, 3)
+            host.sound(Audio.TARGET, 1.2f)
+        } else {
+            if (store.essence < 5) { host.sound(Audio.DENY); return }
+            store.essence = store.essence - 5
+            addBond(pet.species, 2)
+            host.sound(Audio.UPGRADE, 1.2f, 0.7f)
+        }
+        pet.happyT = 3f
+        toastText = "${Species.ALL[pet.species].name} LOVED IT!"
+        toastT = 2.5f
     }
 
     private fun buySelected() {
@@ -500,6 +689,9 @@ class GameEngine(
         sb.append(",\"counts\":[").append(counts.joinToString(",")).append("]")
         sb.append(",\"best\":[").append(best.joinToString(",")).append("]")
         sb.append(",\"firstAt\":[").append(firstAt.joinToString(",")).append("]")
+        loadBonds()
+        sb.append(",\"berries\":").append(berries)
+        sb.append(",\"bonds\":[").append(bonds.joinToString(",")).append("]")
         sb.append("}")
         return sb.toString()
     }

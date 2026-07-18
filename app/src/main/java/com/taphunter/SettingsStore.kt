@@ -86,4 +86,14 @@ class SettingsStore(context: Context) {
     var lifetimeDistanceM: Float
         get() = p.getFloat("lifeDistM", 0f)
         set(v) { p.edit().putFloat("lifeDistM", v).apply() }
+
+    /** Berries found along the way, waiting to be fed in the den. */
+    var berries: Int
+        get() = p.getInt("berries", 0)
+        set(v) { p.edit().putInt("berries", v.coerceAtLeast(0)).apply() }
+
+    /** Bond points per species, CSV. */
+    var bondCsv: String
+        get() = p.getString("bonds", "") ?: ""
+        set(v) { p.edit().putString("bonds", v).apply() }
 }
