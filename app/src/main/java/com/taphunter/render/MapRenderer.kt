@@ -61,6 +61,12 @@ class MapRenderer {
     private val work = Path()
     private val occupied = mutableListOf<RectF>()
 
+    /** Label stickiness: recently shown names keep winning their spot, so
+     * heading wobble cannot make the map's words blink on and off. */
+    private val stick = HashMap<Long, Long>()
+    private fun sticky(id: Long, now: Long) = (stick[id] ?: 0L) > now
+    private fun hold(id: Long, now: Long) { stick[id] = now + 2600L }
+
     private var mPerLon = 111320.0
 
     fun draw(c: Canvas, w: Int, h: Int, g: GameEngine, t: Float) {
@@ -86,6 +92,7 @@ class MapRenderer {
             return abs(sx) * scale < radius * 1.35f && abs(sy) * scale < radius * 1.35f
         }
 
+        val now = System.currentTimeMillis()
         clip.reset(); clip.addCircle(cx, cy, radius, Path.Direction.CW)
         c.save(); c.clipPath(clip)
 
@@ -134,16 +141,18 @@ class MapRenderer {
                 RpgNamer.road(road.name, road.kind, road.id)?.let { fancy ->
                     val lx = midX / midN; val ly = midY / midN
                     val dx = lx - cx; val dy = ly - cy
-                    // Named streets outrank unnamed path filler.
-                    val rank = sqrt(dx * dx + dy * dy) + if (road.name == null) 90f else 0f
+                    // Named streets outrank unnamed path filler; a label that
+                    // was just visible outranks a newcomer (no blinking).
+                    var rank = sqrt(dx * dx + dy * dy) + if (road.name == null) 90f else 0f
+                    if (sticky(fancy.hashCode().toLong(), now)) rank -= 170f
                     labelWanted += Triple(fancy, lx, ly) to rank
                 }
             }
         }
 
-        // POI markers + RPG names, nearest first, deconflicted.
+        // POI markers + RPG names, nearest first (sticky first), deconflicted.
         val poiLabels = g.pois
-            .map { it to GeoMath.distanceM(me, it.p) }
+            .map { it to (GeoMath.distanceM(me, it.p) - if (sticky(it.id, now)) 70f else 0f) }
             .filter { it.second < g.zoomRadius * 1.15f }
             .sortedBy { it.second }
             .take(9)
@@ -153,14 +162,20 @@ class MapRenderer {
             c.drawCircle(pt.x, pt.y, 4f, fill)
             fill.color = Color.rgb(255, 250, 230)
             c.drawCircle(pt.x, pt.y, 1.8f, fill)
-            place(c, RpgNamer.poi(poi.name, poi.category, poi.id), pt.x, pt.y, label)
+            if (place(c, RpgNamer.poi(poi.name, poi.category, poi.id), pt.x, pt.y, label)) {
+                hold(poi.id, now)
+            }
         }
         var shown = 0
-        for ((entry, _) in labelWanted.sortedBy { it.second }) {
+        for ((entry, rank) in labelWanted.sortedBy { it.second }) {
             if (shown >= 5) break
             val (name, lx, ly) = entry
-            if (place(c, name, lx, ly, roadLabel)) shown++
+            if (place(c, name, lx, ly, roadLabel)) {
+                shown++
+                hold(name.hashCode().toLong(), now)   // name is seeded = stable key
+            }
         }
+        if (stick.size > 160) stick.entries.removeAll { it.value < now }
 
         // Capture ring: creatures engage only at arm's length (3 m).
         strokeP.color = Color.argb(110, 120, 255, 200); strokeP.strokeWidth = 2.5f

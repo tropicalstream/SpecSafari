@@ -425,7 +425,8 @@ class MainActivity : Activity() {
         note.addView(text(
             "Creatures materialize over the minimap as you close in and can only " +
                 "be captured within 3 meters — walk right up to them. Treasure " +
-                "opens from 6 meters. The realm redraws itself wherever you roam.",
+                "opens from 10 meters, and everything waits ON the street — " +
+                "never inside a building. The realm redraws itself wherever you roam.",
             13f, parchment))
         return scroll(c, note)
     }

@@ -67,6 +67,18 @@ object GeoMath {
         return rel
     }
 
+    /** Closest point to p on segment a-b (local flat-earth approximation). */
+    fun nearestOnSegment(p: GeoPoint, a: GeoPoint, b: GeoPoint): GeoPoint {
+        val mLon = 111320.0 * cos(Math.toRadians(p.lat))
+        val ax = (a.lon - p.lon) * mLon; val ay = (a.lat - p.lat) * 111320.0
+        val bx = (b.lon - p.lon) * mLon; val by = (b.lat - p.lat) * 111320.0
+        val dx = bx - ax; val dy = by - ay
+        val len2 = dx * dx + dy * dy
+        val t = if (len2 < 1e-9) 0.0 else (-(ax * dx + ay * dy) / len2).coerceIn(0.0, 1.0)
+        val x = ax + dx * t; val y = ay + dy * t
+        return GeoPoint(p.lat + y / 111320.0, p.lon + x / mLon)
+    }
+
     fun prettyDistance(m: Float): String = when {
         m < 1000f -> "${m.toInt()} M"
         else -> String.format("%.1f KM", m / 1000f)

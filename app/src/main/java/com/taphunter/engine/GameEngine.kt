@@ -42,7 +42,7 @@ class GameEngine(
         const val LOOT_SECONDS = 3.5f
         const val ENGAGE_SECONDS = 18f             // spec: interactions stay under 20 s
         const val CAPTURE_RANGE_M = 3f             // spec: creatures engage only within 3 m
-        const val CHEST_RANGE_M = 6f
+        const val CHEST_RANGE_M = 10f              // generous vs street-side GPS drift
     }
 
     var state = State.TITLE; private set
