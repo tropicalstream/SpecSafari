@@ -60,6 +60,45 @@ class DenRenderer : GLSurfaceView.Renderer {
     /** (event, species) pairs for the activity's audio layer. */
     val audioEvents = ConcurrentLinkedQueue<IntArray>()
 
+    // ------- the real sky: local clock + local weather over the den
+    @Volatile var weatherCode = 0        // WMO code from Open-Meteo, 0 = clear
+    @Volatile var windKmh = 0f
+    private var flashT = 0f              // thunder
+    private var bakedDay = -1f           // ground bake tracks the daylight
+
+    fun setWeather(code: Int, wind: Float) { weatherCode = code; windKmh = wind }
+
+    /** 0 = deep night, 1 = midday, smooth dawn/dusk ramps from the clock. */
+    private fun dayLerp(): Float {
+        val cal = java.util.Calendar.getInstance()
+        val h = cal.get(java.util.Calendar.HOUR_OF_DAY) + cal.get(java.util.Calendar.MINUTE) / 60f
+        return when {
+            h < 5f || h >= 21f -> 0f
+            h < 8f -> (h - 5f) / 3f          // dawn
+            h < 17f -> 1f
+            else -> 1f - (h - 17f) / 4f      // long dusk
+        }
+    }
+
+    private val raining get() = weatherCode in 51..67 || weatherCode in 80..82 || weatherCode >= 95
+    private val snowing get() = weatherCode in 71..77 || weatherCode == 85 || weatherCode == 86
+    private val foggy get() = weatherCode == 45 || weatherCode == 48
+    private val overcast get() = weatherCode == 3 || raining || snowing
+
+    /** Nocturnal souls: dusk-stalkers and void-things keep opposite hours. */
+    private val nocturnal = setOf(10, 11, 12, 13)
+
+    private fun dayMix(c: Int, day: Float): Int {
+        // Daylight lifts the palette toward a pale sky-wash; overcast mutes it.
+        val k = day * (if (overcast) 0.45f else 0.7f)
+        val dr = 150; val dg = 185; val db = 215
+        return android.graphics.Color.rgb(
+            (android.graphics.Color.red(c) * (1 - k) + dr * k).toInt(),
+            (android.graphics.Color.green(c) * (1 - k) + dg * k).toInt(),
+            (android.graphics.Color.blue(c) * (1 - k) + db * k).toInt()
+        )
+    }
+
     val creatures = ArrayList<DenC>()
     private val particles = ArrayList<Particle>()
     private var mainProg = 0; private var skyProg = 0; private var ptProg = 0
@@ -165,8 +204,12 @@ class DenRenderer : GLSurfaceView.Renderer {
         val dt = if (lastNs == 0L) 0.016f else ((now - lastNs) / 1e9f).coerceIn(0.001f, 0.05f)
         lastNs = now; t += dt
 
-        if (rebuild) { rebuild = false; rebuildScene() }
+        val day = dayLerp()
+        if (abs(day - bakedDay) > 0.15f) rebuild = true   // the earth relights slowly
+        if (rebuild) { rebuild = false; bakedDay = day; rebuildScene() }
         step(dt)
+        flashT = (flashT - dt).coerceAtLeast(0f)
+        if (weatherCode >= 95 && Random.nextFloat() < dt * 0.12f) flashT = 0.18f
 
         // Fast-travel glide, then free walking.
         if (!glideX.isNaN()) {
@@ -191,10 +234,14 @@ class DenRenderer : GLSurfaceView.Renderer {
 
         glClear(GL_COLOR_BUFFER_BIT or GL_DEPTH_BUFFER_BIT)
 
-        // Sky, blended across the biome seams as you walk.
-        val skyTop = Habitats.blendColor(camPX) { it.skyTop }
-        val skyBot = Habitats.blendColor(camPX) { it.skyBot }
-        val fog = Habitats.blendColor(camPX) { it.fog }
+        // Sky: biome blend by position, then the real hour and weather over it.
+        var skyTop = dayMix(Habitats.blendColor(camPX) { it.skyTop }, day)
+        var skyBot = dayMix(Habitats.blendColor(camPX) { it.skyBot }, day)
+        val fog = dayMix(Habitats.blendColor(camPX) { it.fog }, day)
+        if (flashT > 0f) {   // lightning washes the whole sky white
+            skyTop = android.graphics.Color.rgb(230, 235, 255)
+            skyBot = android.graphics.Color.rgb(200, 215, 245)
+        }
         glDisable(GL_DEPTH_TEST)
         glUseProgram(skyProg)
         glUniform3f(glGetUniformLocation(skyProg, "uTop"), red(skyTop), green(skyTop), blue(skyTop))
@@ -215,6 +262,9 @@ class DenRenderer : GLSurfaceView.Renderer {
         glUniform3f(glGetUniformLocation(mainProg, "uLight"), 0.35f, 0.8f, 0.5f)
         glUniform3f(glGetUniformLocation(mainProg, "uFog"), red(fog), green(fog), blue(fog))
         glUniform3f(glGetUniformLocation(mainProg, "uRim"), 0.55f, 0.85f, 1f)
+        glUniform1f(glGetUniformLocation(mainProg, "uDay"),
+            if (flashT > 0f) 1f else day)
+        glUniform1f(glGetUniformLocation(mainProg, "uFogNear"), if (foggy) 3f else 9f)
         val aPos = glGetAttribLocation(mainProg, "aPos")
         val aNrm = glGetAttribLocation(mainProg, "aNrm")
         val aCol = glGetAttribLocation(mainProg, "aCol")
@@ -317,10 +367,11 @@ class DenRenderer : GLSurfaceView.Renderer {
         val w = Habitats.WORLD_W
         // Ground as strips so the earth itself changes with the biome.
         val strips = 32
+        val day = bakedDay.coerceAtLeast(0f)
         for (s in 0 until strips) {
             val x0 = -9f + (w + 18f) * s / strips
             val x1 = -9f + (w + 18f) * (s + 1) / strips
-            val col = Habitats.blendColor((x0 + x1) / 2f) { it.ground }
+            val col = dayMix(Habitats.blendColor((x0 + x1) / 2f) { it.ground }, day * 0.7f)
             b.quad(x0, 0f, 9f, x1, 0f, 9f, x1, 0f, -9f, x0, 0f, -9f, col)
         }
         for (zone in Habitats.ZONES) {
@@ -400,7 +451,10 @@ class DenRenderer : GLSurfaceView.Renderer {
                     }
                     continue
                 }
-                c.awakeT -= dt
+                // Sleep pressure follows the real clock: diurnal creatures tire
+                // at night, the nocturnal tire in daylight.
+                val offHours = if (c.species in nocturnal) dayLerp() else 1f - dayLerp()
+                c.awakeT -= dt * (1f + offHours * 1.2f)
                 if (c.awakeT <= 0f && !c.homing) { c.homing = true; c.targetX = c.nestX; c.targetZ = c.nestZ }
                 if (c.homing && abs(c.x - c.nestX) < 0.4f && abs(c.z - c.nestZ) < 0.4f) {
                     c.homing = false
@@ -568,8 +622,9 @@ class DenRenderer : GLSurfaceView.Renderer {
                 if (selected >= creatures.size) selected = -1
             }
         }
-        // Fireflies tinted by where they hover.
-        if (particles.count { it.vy < 0.05f } < 40 && Random.nextFloat() < dt * 10f) {
+        // Fireflies belong to clear nights; rain and daylight send them home.
+        val fireflyRate = (1f - dayLerp()) * (if (raining || snowing) 0f else 1f)
+        if (particles.count { it.vy in 0f..0.05f } < 40 && Random.nextFloat() < dt * 10f * fireflyRate) {
             val px = camPX - 6f + Random.nextFloat() * 12f
             val col = Habitats.blendColor(px) { it.fireflyColor }
             particles += Particle(
@@ -577,13 +632,28 @@ class DenRenderer : GLSurfaceView.Renderer {
                 0.02f, 0f, 6f + Random.nextFloat() * 6f,
                 red(col), green(col), blue(col), 14f + Random.nextFloat() * 16f)
         }
+        // The weather itself: rain streaks or drifting snow around the walker.
+        if (raining && Random.nextFloat() < dt * 90f) {
+            particles += Particle(
+                camPX - 5f + Random.nextFloat() * 10f, 3.2f, -3f + Random.nextFloat() * 5f,
+                -6.5f - Random.nextFloat() * 2f, 0f, 0.55f,
+                0.55f, 0.75f, 0.95f, 9f)
+        }
+        if (snowing && Random.nextFloat() < dt * 30f) {
+            particles += Particle(
+                camPX - 5f + Random.nextFloat() * 10f, 3f, -3f + Random.nextFloat() * 5f,
+                -0.55f, 0f, 5f,
+                0.95f, 0.97f, 1f, 13f)
+        }
+        val wind = (windKmh / 30f).coerceIn(0f, 1.5f)
         val it = particles.iterator()
         while (it.hasNext()) {
             val p = it.next()
             p.life += dt
             p.y += p.vy * dt * 30f * dt + p.vy * dt
-            p.x += sin(p.life * 2f + p.z) * dt * 0.15f
-            if (p.life >= p.maxLife) it.remove()
+            p.x += sin(p.life * 2f + p.z) * dt * 0.15f +
+                (if (p.vy < -0.1f) wind * dt * 1.2f else 0f)   // weather rides the wind
+            if (p.life >= p.maxLife || p.y < 0.02f && p.vy < -1f) it.remove()
         }
     }
 

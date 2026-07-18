@@ -45,6 +45,7 @@ class DenActivity : Activity() {
 
     private var dex: JSONObject? = null
     private var walletText: TextView? = null
+    private var envText: TextView? = null
     private var infoName: TextView? = null
     private var infoLine: TextView? = null
     private var hintText: TextView? = null
@@ -290,6 +291,13 @@ class DenActivity : Activity() {
         }
         col.addView(chips)
 
+        // The real sky's report card: local hour and local weather.
+        envText = TextView(this).apply {
+            textSize = 11f; setTextColor(dim); gravity = Gravity.CENTER
+            typeface = Typeface.DEFAULT_BOLD
+        }
+        col.addView(envText)
+
         col.addView(View(this), LinearLayout.LayoutParams(1, 0, 1f))
 
         // SET FREE — visible only when someone is chosen.
@@ -466,11 +474,70 @@ class DenActivity : Activity() {
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
+    // ----------------------------------------------------------- weather
+
+    /** Open-Meteo (no key) at the phone's last position, cached 30 min. */
+    private fun fetchWeather() {
+        val age = System.currentTimeMillis() - prefs.getLong("wxAt", 0L)
+        if (age < 30 * 60_000L) {
+            renderer.setWeather(prefs.getInt("wxCode", 0), prefs.getFloat("wxWind", 0f))
+            return
+        }
+        var lat = LocationBeamService.lastLat
+        var lon = LocationBeamService.lastLon
+        if (lat.isNaN()) {
+            runCatching {
+                val lm = getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+                val loc = lm.allProviders.mapNotNull {
+                    runCatching { lm.getLastKnownLocation(it) }.getOrNull()
+                }.maxByOrNull { it.time }
+                if (loc != null) { lat = loc.latitude; lon = loc.longitude }
+            }
+        }
+        if (lat.isNaN()) return   // no position, no forecast; the clock still rules
+        Thread {
+            runCatching {
+                val url = java.net.URL(
+                    "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon" +
+                        "&current=temperature_2m,weather_code,wind_speed_10m")
+                val json = JSONObject(url.openStream().bufferedReader().readText())
+                val cur = json.getJSONObject("current")
+                val code = cur.optInt("weather_code")
+                val temp = cur.optDouble("temperature_2m")
+                val wind = cur.optDouble("wind_speed_10m").toFloat()
+                prefs.edit().putLong("wxAt", System.currentTimeMillis())
+                    .putInt("wxCode", code).putFloat("wxTemp", temp.toFloat())
+                    .putFloat("wxWind", wind).apply()
+                renderer.setWeather(code, wind)
+            }
+        }.start()
+    }
+
+    private fun weatherLabel(code: Int): String = when {
+        code >= 95 -> "THUNDER"
+        code in 71..77 || code == 85 || code == 86 -> "SNOW"
+        code in 51..67 || code in 80..82 -> "RAIN"
+        code == 45 || code == 48 -> "FOG"
+        code == 3 -> "OVERCAST"
+        code in 1..2 -> "SOME CLOUDS"
+        else -> "CLEAR"
+    }
+
+    private fun updateEnv() {
+        val time = android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date())
+        val hasWx = prefs.getLong("wxAt", 0L) > 0L
+        val wx = if (hasWx)
+            " · ${weatherLabel(prefs.getInt("wxCode", 0))} · ${prefs.getFloat("wxTemp", 0f).toInt()}°"
+        else ""
+        envText?.text = "$time$wx"
+    }
+
     // ----------------------------------------------------------- pulses
 
     private val poll = object : Runnable {
         override fun run() {
             refreshDex(); updateWallet(); updateShop(); updateInfo()
+            fetchWeather(); updateEnv()
             handler.postDelayed(this, 1500)
         }
     }

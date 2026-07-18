@@ -47,6 +47,8 @@ class LocationBeamService : Service() {
 
         /** Latest progress snapshot from the glasses, JSON (HunterDex). */
         @Volatile var dexJson: String? = null
+        @Volatile var lastLat = Double.NaN
+        @Volatile var lastLon = Double.NaN
 
         /** Push a settings line to the glasses; false when unlinked. */
         fun sendLine(line: String): Boolean = instance?.sendRaw(line) ?: false
@@ -61,6 +63,7 @@ class LocationBeamService : Service() {
     private val listener = object : LocationListener {
         override fun onLocationChanged(loc: Location) {
             lastFix = loc
+            lastLat = loc.latitude; lastLon = loc.longitude
             lastFixText = "%.5f, %.5f  ±%.0fm".format(loc.latitude, loc.longitude, loc.accuracy)
             send(loc)
         }

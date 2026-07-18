@@ -155,14 +155,17 @@ object DenGL {
     const val MAIN_FS = """
         precision mediump float;
         uniform vec3 uCam; uniform vec3 uLight; uniform vec3 uFog; uniform vec3 uRim;
+        uniform float uDay;   // 0 deep night .. 1 midday
+        uniform float uFogNear;
         varying vec3 vW; varying vec3 vN; varying vec4 vC;
         void main() {
             vec3 n = normalize(vN);
             float lit = max(dot(n, uLight), 0.0) * 0.6 + 0.4;
+            lit *= 0.78 + 0.5 * uDay;
             vec3 view = normalize(uCam - vW);
             float rim = pow(1.0 - max(dot(n, view), 0.0), 2.6);
-            vec3 base = vC.rgb * lit + uRim * rim * 0.32 + vC.rgb * vC.a * 1.1;
-            float fog = clamp((length(uCam - vW) - 9.0) / 16.0, 0.0, 0.85);
+            vec3 base = vC.rgb * lit + uRim * rim * 0.32 * (1.0 - uDay * 0.5) + vC.rgb * vC.a * 1.1;
+            float fog = clamp((length(uCam - vW) - uFogNear) / 16.0, 0.0, 0.9);
             gl_FragColor = vec4(mix(base, uFog, fog), 1.0);
         }"""
 
