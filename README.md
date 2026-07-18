@@ -66,13 +66,35 @@ walking game, not a phone game.
 | **Tap** | engage / open / sonar ping | select / buy |
 | **Double-tap** | menu | back |
 
+## Where location comes from (important)
+
+The X3's own location stack is empty — the OS exposes only a `passive`
+provider and a `fused` stub that never produces a fix (verified with
+`dumpsys location`; the Everyday project reached the same conclusion and
+solved it with its phone companion). So TapHunter ships in two parts:
+
+- **TapHunter** (glasses) — the game.
+- **TapHunter Beam** (phone) — a tiny companion that streams the phone's
+  GPS to the glasses over Bluetooth RFCOMM, on TapHunter's own service
+  UUID so it coexists with Everyday's channel. Pair phone ↔ glasses in
+  Bluetooth settings (already done if you use Everyday), open the Beam
+  app, tap **START BEAM**, and hunt. The glasses also listen to every
+  system provider, so if the firmware ever grows real GNSS it will be
+  used automatically.
+
 ## Build & install
 
 ```bash
 cd ~/Projects/TapHunter
-./gradlew assembleDebug && adb install -r app/build/outputs/apk/debug/app-debug.apk
+./gradlew :app:assembleDebug :phone:assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk        # glasses
 adb shell pm grant com.taphunter android.permission.ACCESS_FINE_LOCATION
+adb shell pm grant com.taphunter android.permission.BLUETOOTH_CONNECT
+# sideload phone/build/outputs/apk/debug/phone-debug.apk on the phone
 ```
+
+Prebuilt: `TapHunter.apk` (glasses) and `TapHunterBeam.apk` (phone) at
+the repo root.
 
 JDK 17, Kotlin, zero dependencies, no binary assets — sprites are Canvas
 vectors, sounds are synthesized at first launch. Side-by-side 3D enables
@@ -96,7 +118,10 @@ real game (GPS, real timing duel) is unaffected.
 - Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright)
   contributors, fetched via the Overpass API.
 - The RayNeo X3 compass conventions (geomagnetic rotation vector, optical
-  forward axes) were learned from Théophile Gaudin's excellent open
-  [Everyday](https://github.com/TheophileGaudin/Everyday) HUD project.
-  TapHunter shares no code with it — it is a fresh, dependency-free
-  implementation in this suite's house style.
+  forward axes), the phone-feeds-location architecture, and the RFCOMM
+  topology (phone serves, glasses connect to a bonded device's service
+  UUID) come from Théophile Gaudin's excellent open
+  [Everyday](https://github.com/TheophileGaudin/Everyday) HUD project,
+  adopted here with the author's permission. TapHunter's implementation
+  is fresh, dependency-free code in this suite's house style, on its own
+  service UUID.

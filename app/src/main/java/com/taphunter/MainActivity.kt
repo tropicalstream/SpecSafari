@@ -22,6 +22,7 @@ import com.taphunter.geo.Compass
 import com.taphunter.geo.GeoPoint
 import com.taphunter.geo.LocationSource
 import com.taphunter.geo.OsmRepository
+import com.taphunter.geo.PhoneLink
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.sqrt
@@ -50,6 +51,7 @@ class MainActivity : Activity(), Host {
     private lateinit var sbsRoot: BinocularSbsLayout
     private lateinit var location: LocationSource
     private lateinit var compass: Compass
+    private lateinit var phoneLink: PhoneLink
 
     private val handler = Handler(Looper.getMainLooper())
 
@@ -78,7 +80,18 @@ class MainActivity : Activity(), Host {
             compass.updateDeclination(p)
         }
         compass = Compass(this) { deg -> engine.onHeading(deg) }
+        phoneLink = PhoneLink(this) { lat, lon, acc ->
+            runOnUiThread { location.acceptExternal(lat, lon, acc) }
+        }
         engine.demoDriver = { p -> location.setFake(p) }
+        handler.post(object : Runnable {
+            override fun run() {
+                engine.locStatus =
+                    if (phoneLink.connected) location.statusText
+                    else "${location.statusText} · ${phoneLink.status}"
+                handler.postDelayed(this, 2000)
+            }
+        })
         gameView = GameView(this, engine, renderer)
         sbsRoot = BinocularSbsLayout(this).apply { addView(gameView) }
         setContentView(sbsRoot)
@@ -86,16 +99,15 @@ class MainActivity : Activity(), Host {
         hideSystemBars()
         applySettings()
         engine.boot()
-        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissions(
-                arrayOf(
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                ), 4001
-            )
+        val wanted = mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+        if (Build.VERSION.SDK_INT >= 31) wanted += Manifest.permission.BLUETOOTH_CONNECT
+        val missing = wanted.filter {
+            checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
         }
+        if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), 4001)
         applyDebugExtras(intent)
     }
 
@@ -234,6 +246,7 @@ class MainActivity : Activity(), Host {
         applySettings()
         location.start()
         compass.start()
+        phoneLink.start()
         gameView.start()
         engine.boot()
     }
@@ -242,6 +255,7 @@ class MainActivity : Activity(), Host {
         engine.onAppPause()
         location.stop()
         compass.stop()
+        phoneLink.stop()
         gameView.stop()
         super.onPause()
     }

@@ -31,6 +31,10 @@ class Spawner(private val rng: Random) {
     var creature: Spawn? = null; private set
     val treasures = mutableListOf<Spawn>()
     private val usedPois = mutableSetOf<Long>()
+    private var lastSpawnBearing = Float.NaN   // fan successive hunts apart
+
+    /** Roads a hunter can actually walk (spec: "paved walkable directions"). */
+    private val unwalkable = setOf("motorway", "motorway_link", "trunk", "trunk_link")
 
     fun beginSession(start: GeoPoint) {
         origin = start
@@ -38,6 +42,7 @@ class Spawner(private val rng: Random) {
         creature = null
         treasures.clear()
         usedPois.clear()
+        lastSpawnBearing = Float.NaN
     }
 
     /** Ladder distance for a level: 50, 100, 200, 400 ... meters from origin. */
@@ -73,6 +78,13 @@ class Spawner(private val rng: Random) {
     ): Boolean {
         val org = origin ?: return false
         var placed = false
+        // A creature dropped blind (before map data arrived) re-anchors to a
+        // real place as soon as the charts come in.
+        creature?.let { c ->
+            if (c.poiId == 0L && c.placeName == "THE OPEN WILDS" &&
+                (pois.isNotEmpty() || roads.isNotEmpty())
+            ) creature = null
+        }
         if (creature == null) {
             creature = placeCreature(org, player, travelBearing, roads, pois, charmTier)
             placed = creature != null
@@ -109,12 +121,25 @@ class Spawner(private val rng: Random) {
             val dist = GeoMath.distanceM(org, p)
             return dist in minD..maxD
         }
+        // When the hunter is standing still, successive hunts FAN OUT: each
+        // new lair prefers a direction well apart from the previous one
+        // (e.g. north up the boulevard, then south down it).
+        fun fanPenalty(p: GeoPoint): Float {
+            if (travelBearing != null || lastSpawnBearing.isNaN() || level <= 1) return 0f
+            val brg = GeoMath.bearingDeg(org, p)
+            val apart = abs(GeoMath.angleDiff(brg, lastSpawnBearing))
+            return if (apart < 70f) 120f else 0f
+        }
+        fun remember(p: GeoPoint) { lastSpawnBearing = GeoMath.bearingDeg(org, p) }
 
         // 1st choice: a real named place in the ring, ahead of the hunter.
         val poi = pois.asSequence()
             .filter { it.id !in usedPois && inRing(it.p) && inCone(it.p) }
-            .minByOrNull { abs(GeoMath.distanceM(org, it.p) - d) + rng.nextFloat() * 30f }
+            .minByOrNull {
+                abs(GeoMath.distanceM(org, it.p) - d) + fanPenalty(it.p) + rng.nextFloat() * 30f
+            }
         if (poi != null) {
+            remember(poi.p)
             val seed = ((poi.id xor poi.id.ushr(21)).toInt() and 0x7FFFFFFF)
             return Spawn(
                 poi.p, true,
@@ -123,22 +148,31 @@ class Spawner(private val rng: Random) {
             )
         }
 
-        // 2nd: a point along a real road or path in the ring.
-        var best: GeoPoint? = null; var bestScore = Float.MAX_VALUE
-        for (r in roads) for (p in r.pts) {
-            if (!inRing(p) || !inCone(p)) continue
-            val score = abs(GeoMath.distanceM(org, p) - d)
-            if (score < bestScore) { bestScore = score; best = p }
+        // 2nd: a point along a real WALKABLE road or path in the ring; the
+        // lair borrows the street's RPG name so the banner reads like a map.
+        var best: GeoPoint? = null; var bestScore = Float.MAX_VALUE; var bestRoad: OsmRoad? = null
+        for (r in roads) {
+            if (r.kind in unwalkable) continue
+            for (p in r.pts) {
+                if (!inRing(p) || !inCone(p)) continue
+                val walkBonus = if (r.isPath) -18f else 0f
+                val score = abs(GeoMath.distanceM(org, p) - d) + fanPenalty(p) + walkBonus
+                if (score < bestScore) { bestScore = score; best = p; bestRoad = r }
+            }
         }
         if (best != null) {
+            remember(best)
+            val where = bestRoad?.let { RpgNamer.road(it.name, it.kind, it.id) }
+                ?: "AN UNMARKED CROSSING"
             return Spawn(best, true, Species.forCategory("", rng.nextInt(1 shl 30), charmTier),
-                level, "AN UNMARKED CROSSING", 0L)
+                level, where, 0L)
         }
 
         // Last resort (no map data yet): drop it dead ahead at the ladder ring.
         val brg = travelBearing ?: rng.nextFloat() * 360f
         val raw = GeoMath.destination(if (level == 1) org else player, brg,
             if (level == 1) 35f else d * 0.9f)
+        remember(raw)
         return Spawn(raw, true, Species.forCategory("", rng.nextInt(1 shl 30), charmTier),
             level, "THE OPEN WILDS", 0L)
     }

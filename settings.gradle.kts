@@ -14,3 +14,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "TapHunter"
 include(":app")
+include(":phone")

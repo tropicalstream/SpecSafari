@@ -103,13 +103,20 @@ class Renderer(private val g: GameEngine) {
         fill.color = Color.rgb(255, 220, 90)
         c.drawCircle(cx + cos(a) * 26f, h * 0.45f + sin(a) * 26f, 6f, fill)
         body.textAlign = Paint.Align.CENTER
-        val gps = if (g.player != null) "LOCATION LOCKED" else "SEARCHING FOR SKY..."
+        val gps = if (g.player != null) "LOCATION LOCKED" else "SEARCHING FOR A FIX..."
         c.drawText(gps, cx, h * 0.58f, body)
         small.textAlign = Paint.Align.CENTER
         c.drawText(
             if (g.roads.isEmpty()) "CHARTING ROADS AND PLACES..." else "${g.roads.size} WAYS CHARTED",
             cx, h * 0.64f, small
         )
+        if (g.locStatus.isNotEmpty()) c.drawText(g.locStatus, cx, h * 0.70f, small)
+        if (g.player == null && g.stateT > 15f) {
+            small.color = Color.rgb(255, 200, 120)
+            c.drawText("THE GLASSES HAVE NO GPS OF THEIR OWN -", cx, h * 0.78f, small)
+            c.drawText("START THE TAPHUNTER BEAM APP ON YOUR PHONE", cx, h * 0.83f, small)
+            small.color = Color.rgb(180, 220, 245)
+        }
     }
 
     private fun drawHunt(c: Canvas, w: Int, h: Int, t: Float) {

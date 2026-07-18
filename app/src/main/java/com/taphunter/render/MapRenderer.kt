@@ -86,7 +86,14 @@ class MapRenderer {
         // Roads and paths — every one the data has.
         val pt = PointF()
         occupied.clear()
-        val labelWanted = mutableListOf<Triple<String, Float, Float>>()
+        // Creatures and chests own their pixels: labels route around them.
+        for (s in g.interest()) {
+            if (project(s.p, pt)) {
+                occupied += RectF(pt.x - 26f, pt.y - 30f, pt.x + 46f, pt.y + 26f)
+            }
+        }
+        // name, x, y, distance-from-wearer — the street underfoot labels first.
+        val labelWanted = mutableListOf<Pair<Triple<String, Float, Float>, Float>>()
         for (road in g.roads) {
             work.reset()
             var started = false
@@ -116,7 +123,11 @@ class MapRenderer {
             c.drawPath(work, paint)
             if (midN > 0 && (road.name != null || road.isPath)) {
                 RpgNamer.road(road.name, road.kind, road.id)?.let { fancy ->
-                    labelWanted += Triple(fancy, midX / midN, midY / midN)
+                    val lx = midX / midN; val ly = midY / midN
+                    val dx = lx - cx; val dy = ly - cy
+                    // Named streets outrank unnamed path filler.
+                    val rank = sqrt(dx * dx + dy * dy) + if (road.name == null) 90f else 0f
+                    labelWanted += Triple(fancy, lx, ly) to rank
                 }
             }
         }
@@ -136,8 +147,9 @@ class MapRenderer {
             place(c, RpgNamer.poi(poi.name, poi.category, poi.id), pt.x, pt.y, label)
         }
         var shown = 0
-        for ((name, lx, ly) in labelWanted) {
-            if (shown >= 4) break
+        for ((entry, _) in labelWanted.sortedBy { it.second }) {
+            if (shown >= 5) break
+            val (name, lx, ly) = entry
             if (place(c, name, lx, ly, roadLabel)) shown++
         }
 
@@ -189,22 +201,22 @@ class MapRenderer {
         val pulse = 1f + sin(t * 4f) * 0.15f
         if (s.isCreature) {
             val sp = Species.ALL[s.species]
-            fill.color = sp.main; fill.alpha = 90
-            c.drawCircle(x, y, 15f * pulse, fill)
+            fill.color = sp.main; fill.alpha = 100
+            c.drawCircle(x, y, 21f * pulse, fill)
             fill.alpha = 255
-            Sprites.creature(c, s.species, x, y, 6.5f, t, excited = false)
+            Sprites.creature(c, s.species, x, y, 10f, t, excited = false)
             fill.color = Color.rgb(20, 40, 70)
-            val badge = RectF(x + 8f, y - 18f, x + 34f, y - 5f)
+            val badge = RectF(x + 12f, y - 24f, x + 42f, y - 8f)
             c.drawRoundRect(badge, 4f, 4f, fill)
             label.color = Color.rgb(160, 255, 200)
-            c.drawText("L${s.level}", badge.left + 4f, badge.bottom - 3f, label)
+            c.drawText("L${s.level}", badge.left + 5f, badge.bottom - 4f, label)
             label.color = Color.rgb(255, 250, 200)
         } else {
-            Sprites.chest(c, x, y, 7f * pulse, 0f)
+            Sprites.chest(c, x, y, 10f * pulse, 0f)
         }
         if (isTarget) {
-            strokeP.color = Color.rgb(255, 255, 255); strokeP.strokeWidth = 2f
-            c.drawCircle(x, y, 19f * pulse, strokeP)
+            strokeP.color = Color.rgb(255, 255, 255); strokeP.strokeWidth = 2.5f
+            c.drawCircle(x, y, 26f * pulse, strokeP)
         }
     }
 

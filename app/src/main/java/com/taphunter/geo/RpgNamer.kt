@@ -24,6 +24,9 @@ object RpgNamer {
         "THE %s TRACK", "%s RUN", "%s PASSAGE", "THE %s MILE"
     )
 
+    /** Some streets keep their full name under an archaic honorific. */
+    private val FULLNAME_TEMPLATES = arrayOf("YE %s", "OLDE %s", "YE OLDE %s")
+
     private val PATH_NAMES = arrayOf(
         "WANDERER'S PATH", "FOX TRAIL", "MOSSY CUT", "PILGRIM'S WALK",
         "HIDDEN WAY", "DEER TRACK", "SHADOW PATH", "OLD CART TRACK"
@@ -55,7 +58,14 @@ object RpgNamer {
             // Only footpaths earn a label when unnamed; streets stay quiet.
             return if (kind in OsmRoad.PATH_KINDS) PATH_NAMES[s % PATH_NAMES.size] else null
         }
-        return STREET_TEMPLATES[s % STREET_TEMPLATES.size].format(root(name, s))
+        // Half the realm's streets wear the archaic full name ("YE DUBLIN AVE"),
+        // the rest get a template built on the root ("THE DUBLIN WAY").
+        return if (s % 2 == 0) {
+            FULLNAME_TEMPLATES[s % FULLNAME_TEMPLATES.size]
+                .format(name.uppercase().take(20).trim())
+        } else {
+            STREET_TEMPLATES[s % STREET_TEMPLATES.size].format(root(name, s))
+        }
     }
 
     fun poi(name: String?, category: String, id: Long): String {

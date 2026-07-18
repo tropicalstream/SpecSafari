@@ -5,82 +5,140 @@ import android.content.Context
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 
 /**
- * Best-of-all-providers location. The X3's OS exposes fused/gps/network
- * through the framework LocationManager (the Everyday speedometer proved
- * which ones answer); we listen to every enabled provider and keep the
- * freshest accurate fix. A fake mode drives desk demos and screenshots.
+ * Location on the RayNeo X3 is odd: the OS exposes only `passive` and a
+ * `fused` provider (no gps/network), and fixes tend to arrive only when
+ * something else — the phone companion link — injects them. So we do what
+ * the Everyday project proved works on this hardware: register on EVERY
+ * enabled provider (passive included), seed from last-known, and keep
+ * prodding with getCurrentLocation while no fresh fix exists.
  */
 class LocationSource(context: Context, private val onFix: (GeoPoint, Location?) -> Unit) {
 
     private val manager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+    private val handler = Handler(Looper.getMainLooper())
     private var running = false
 
     var current: GeoPoint? = null; private set
     var accuracyM = 999f; private set
     var lastFixElapsed = 0L; private set
     var fake = false; private set
+    var statusText = "STARTING"; private set
 
     /** Breadcrumbs for the travel bearing (spec: spawn "in the general direction of travel"). */
     private data class Crumb(val p: GeoPoint, val at: Long)
     private val trail = ArrayDeque<Crumb>()
 
     private val listener = object : LocationListener {
-        override fun onLocationChanged(loc: Location) {
-            if (fake) return
-            // Prefer the new fix unless it is both older-grade and much less accurate.
-            if (loc.accuracy > 80f && accuracyM < 40f &&
-                SystemClock.elapsedRealtime() - lastFixElapsed < 8000) return
-            accept(GeoPoint(loc.latitude, loc.longitude), loc.accuracy, loc)
-        }
+        override fun onLocationChanged(loc: Location) { deliver(loc) }
         @Deprecated("Deprecated in Java")
         override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
         override fun onProviderEnabled(provider: String) {}
         override fun onProviderDisabled(provider: String) {}
     }
 
+    private fun deliver(loc: Location) {
+        if (fake) return
+        val acc = if (loc.hasAccuracy()) loc.accuracy else 50f
+        accept(GeoPoint(loc.latitude, loc.longitude), acc, loc)
+    }
+
+    private val prodder = object : Runnable {
+        override fun run() {
+            if (!running || fake) return
+            val fresh = current != null &&
+                SystemClock.elapsedRealtime() - lastFixElapsed < 5000
+            if (!fresh) prodProviders()
+            handler.postDelayed(this, 3000)
+        }
+    }
+
     @SuppressLint("MissingPermission")
     fun start() {
         if (running || fake) return
         running = true
-        val wanted = listOf("fused", LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+        // Register on every provider the device admits to having. On the X3
+        // that is [passive, fused]; on anything else this still does the
+        // right thing (gps/network get included automatically).
+        val enabled = runCatching { manager.getProviders(true) }.getOrDefault(emptyList())
+        val all = runCatching { manager.allProviders }.getOrDefault(emptyList())
+        val wanted = (enabled + all).distinct()
+        var registered = 0
         for (p in wanted) {
             runCatching {
-                if (manager.allProviders.contains(p) && manager.isProviderEnabled(p)) {
-                    manager.requestLocationUpdates(p, 1000L, 0f, listener)
-                }
+                manager.requestLocationUpdates(p, 1000L, 0f, listener)
+                registered++
             }
         }
+        statusText = "LISTENING ON ${wanted.joinToString(",").uppercase()}"
         // Seed from whatever the OS remembers so the map appears instantly.
         if (current == null) {
             runCatching {
-                manager.allProviders
-                    .mapNotNull { manager.getLastKnownLocation(it) }
-                    .minByOrNull { it.accuracy }
-                    ?.let { accept(GeoPoint(it.latitude, it.longitude), it.accuracy + 30f, it) }
+                all.mapNotNull { manager.getLastKnownLocation(it) }
+                    .maxByOrNull { it.time }
+                    ?.let { deliver(it) }
             }
+        }
+        handler.postDelayed(prodder, 1500)
+    }
+
+    /** Everyday's trick: an explicit current-location request per provider. */
+    @SuppressLint("MissingPermission")
+    private fun prodProviders() {
+        val all = runCatching { manager.allProviders }.getOrDefault(emptyList())
+        for (p in all) {
+            runCatching {
+                if (Build.VERSION.SDK_INT >= 30) {
+                    manager.getCurrentLocation(p, null, { r -> handler.post(r) }) { loc ->
+                        if (loc != null) deliver(loc)
+                    }
+                } else {
+                    @Suppress("DEPRECATION")
+                    manager.requestSingleUpdate(p, listener, Looper.getMainLooper())
+                }
+            }
+        }
+        // Last-known may have been refreshed by another app meanwhile.
+        runCatching {
+            all.mapNotNull { manager.getLastKnownLocation(it) }
+                .maxByOrNull { it.time }
+                ?.takeIf { System.currentTimeMillis() - it.time < 120_000 }
+                ?.let { deliver(it) }
         }
     }
 
     fun stop() {
         if (!running) return
         running = false
+        handler.removeCallbacks(prodder)
         runCatching { manager.removeUpdates(listener) }
     }
 
     /** Desk-demo hook: adb extras pin the wearer anywhere on Earth. */
     fun setFake(p: GeoPoint) {
         fake = true
+        statusText = "DEMO LOCATION"
         accept(p, 5f, null)
+    }
+
+    /** Fixes beamed from the TapHunter phone app — the primary real source. */
+    fun acceptExternal(lat: Double, lon: Double, acc: Float) {
+        if (fake) return
+        accept(GeoPoint(lat, lon), acc, null)
+        statusText = "PHONE GPS ±${acc.toInt()} M"
     }
 
     private fun accept(p: GeoPoint, acc: Float, loc: Location?) {
         current = p
         accuracyM = acc
         lastFixElapsed = SystemClock.elapsedRealtime()
+        if (!fake) statusText = "FIX ${loc?.provider?.uppercase() ?: "?"} ±${acc.toInt()} M"
         val now = System.currentTimeMillis()
         val last = trail.lastOrNull()
         if (last == null || GeoMath.distanceM(last.p, p) >= 8f) {

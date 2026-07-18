@@ -68,6 +68,9 @@ class GameEngine(
     var demo = false
     var demoDriver: ((GeoPoint) -> Unit)? = null
 
+    /** Live text from the location stack, shown while acquiring. */
+    var locStatus = ""
+
     // ------------------------------------------------------------ engage
     var engageTarget: Spawn? = null; private set
     var hits = 0; private set
