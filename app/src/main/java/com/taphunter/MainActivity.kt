@@ -136,11 +136,18 @@ class MainActivity : Activity(), Host {
     }
 
     private fun applyDebugExtras(i: Intent) {
+        // Demo is per-launch: a plain launcher start ALWAYS returns to real
+        // GPS, even when an old demo process is still alive (learned the
+        // hard way — a leftover ghost hunter once kept hunting Dublin Ave).
         if (i.getBooleanExtra("demo", false)) {
             engine.demo = true
             val lat = i.getFloatExtra("lat", 37.7694f).toDouble()
             val lon = i.getFloatExtra("lon", -122.4862f).toDouble()
             location.setFake(GeoPoint(lat, lon))
+        } else if (engine.demo) {
+            engine.demo = false
+            location.clearFake()
+            engine.abandonSession()   // the ghost's hunt is not your hunt
         }
     }
 

@@ -127,6 +127,17 @@ class LocationSource(context: Context, private val onFix: (GeoPoint, Location?) 
         accept(p, 5f, null)
     }
 
+    /** Back to reality: real sources resume, the ghost's trail is erased. */
+    fun clearFake() {
+        if (!fake) return
+        fake = false
+        current = null
+        trail.clear()
+        sessionDistanceM = 0f
+        statusText = "STARTING"
+        start()
+    }
+
     /** Fixes beamed from the TapHunter phone app — the primary real source. */
     fun acceptExternal(lat: Double, lon: Double, acc: Float) {
         if (fake) return

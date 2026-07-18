@@ -127,6 +127,12 @@ class GameEngine(
 
     fun onAppPause() { pausedAtMs = System.currentTimeMillis() }
 
+    /** Drop the current session cold (demo -> real handover): fresh hunt. */
+    fun abandonSession() {
+        engageTarget = null
+        switch(State.TITLE)
+    }
+
     // ------------------------------------------------------------- inputs
 
     var sessionWalkedM = 0f; private set
