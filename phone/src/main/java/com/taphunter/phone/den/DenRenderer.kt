@@ -22,7 +22,8 @@ class DenC(val species: Int) {
     var phase = Random.nextFloat() * 6f
     var pauseT = 0f
     var happyT = 0f
-    var face = 1f
+    var headingDeg = Random.nextFloat() * 360f   // true facing, world yaw
+    var bank = 0f                                 // lean into turns (fliers)
     var targetX = Float.NaN
     var targetZ = 0f
     var lingerT = 0f
@@ -308,16 +309,12 @@ class DenRenderer : GLSurfaceView.Renderer {
                     else -> 1f + sin(c.phase * 5f) * 0.04f +
                         (if (c.happyT > 0f) sin(c.happyT * 14f) * 0.08f else 0f)
                 }
-                Matrix.setIdentityM(model, 0)
-                Matrix.translateM(model, 0, c.x, hop, c.z)
-                Matrix.rotateM(model, 0, c.face * -22f, 0f, 1f, 0f)
-                val sz = 0.62f * c.scale
-                Matrix.scaleM(model, 0, sz, sz * squash, sz)
-                glUniformMatrix4fv(uM, 1, false, model, 0)
                 shadowDraw(c, aPos, aNrm, aCol, uM)
                 Matrix.setIdentityM(model, 0)
                 Matrix.translateM(model, 0, c.x, hop, c.z)
-                Matrix.rotateM(model, 0, c.face * -22f, 0f, 1f, 0f)
+                Matrix.rotateM(model, 0, c.headingDeg, 0f, 1f, 0f)
+                if (c.bank != 0f) Matrix.rotateM(model, 0, c.bank, 0f, 0f, 1f)
+                val sz = 0.62f * c.scale
                 Matrix.scaleM(model, 0, sz, sz * squash, sz)
                 glUniformMatrix4fv(uM, 1, false, model, 0)
                 forms.getOrPut(c.species) { CreatureForms.build(c.species) }.draw(aPos, aNrm, aCol)
@@ -344,6 +341,7 @@ class DenRenderer : GLSurfaceView.Renderer {
     private fun shadowDraw(c: DenC, aPos: Int, aNrm: Int, aCol: Int, uM: Int) {
         Matrix.setIdentityM(model, 0)
         Matrix.translateM(model, 0, c.x, 0f, c.z)
+        Matrix.rotateM(model, 0, c.headingDeg, 0f, 1f, 0f)   // oblong shadows follow the body
         Matrix.scaleM(model, 0, c.scale, 1f, c.scale)
         glUniformMatrix4fv(uM, 1, false, model, 0)
         shadowMesh?.draw(aPos, aNrm, aCol)
@@ -432,7 +430,7 @@ class DenRenderer : GLSurfaceView.Renderer {
                     c.vx = (if (dx > 0) 1f else -1f) * 4.5f
                     c.vz = 0f
                     c.x += c.vx * dt
-                    c.face += ((if (c.vx > 0) 1f else -1f) - c.face) * dt * 8f
+                    turnToward(c, sp, dt)
                     if (Random.nextFloat() < dt * 8f) heart(c.x, 0.8f, c.z, false)
                     if (abs(dx) < 1f) { removed = true }
                     continue
@@ -613,7 +611,7 @@ class DenRenderer : GLSurfaceView.Renderer {
                         }
                     }
                 }
-                if (abs(c.vx) > 0.05f) c.face += ((if (c.vx > 0) 1f else -1f) - c.face) * dt * 6f
+                turnToward(c, sp, dt)
             }
             if (removed) {
                 val gone = creatures.filter { it.releasing && abs(it.targetX - it.x) < 1f }
@@ -655,6 +653,33 @@ class DenRenderer : GLSurfaceView.Renderer {
                 (if (p.vy < -0.1f) wind * dt * 1.2f else 0f)   // weather rides the wind
             if (p.life >= p.maxLife || p.y < 0.02f && p.vy < -1f) it.remove()
         }
+    }
+
+    /**
+     * Turn to face where you're going, at a rate set by your biology:
+     * darters and skimmers whip around and lean into it, floaters pivot
+     * dreamily, walkers turn like the creatures they are — a Thornpup
+     * spins on a leaf-tip, a Clayward comes about like a barge.
+     */
+    private fun turnToward(c: DenC, sp: Species, dt: Float) {
+        val speed2 = c.vx * c.vx + c.vz * c.vz
+        var delta = 0f
+        if (speed2 > 0.006f) {
+            val desired = Math.toDegrees(kotlin.math.atan2(c.vx.toDouble(), c.vz.toDouble())).toFloat()
+            delta = ((desired - c.headingDeg + 540f) % 360f) - 180f
+            val turnRate = when (sp.motion) {
+                Species.DART, Species.SKIM -> 220f + sp.energy * 320f
+                Species.FLOAT, Species.DRIFT -> 55f + sp.energy * 90f
+                Species.SWIM -> 100f + sp.energy * 130f
+                else -> 70f + sp.energy * 240f
+            }
+            c.headingDeg += delta.coerceIn(-turnRate * dt, turnRate * dt)
+            c.headingDeg = (c.headingDeg + 360f) % 360f
+        }
+        // Fliers bank into their turns; everyone else stays level.
+        val wantBank = if (sp.motion == Species.SKIM || sp.motion == Species.DART)
+            (-delta).coerceIn(-38f, 38f) * 0.55f else 0f
+        c.bank += (wantBank - c.bank) * (dt * 5f).coerceAtMost(1f)
     }
 
     private fun heart(x: Float, y: Float, z: Float, big: Boolean) {
