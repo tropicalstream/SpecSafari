@@ -27,6 +27,8 @@ class DenC(val species: Int) {
     var lingerT = 0f
     var under = false          // burrowers: traveling as a molehill
     var underT = 0f
+    var meetCd = 0f            // between social encounters
+    val scale = 0.88f + Random.nextFloat() * 0.24f   // siblings differ a little
 }
 
 private class Particle(var x: Float, var y: Float, var z: Float,
@@ -223,7 +225,8 @@ class DenRenderer : GLSurfaceView.Renderer {
                 Matrix.setIdentityM(model, 0)
                 Matrix.translateM(model, 0, c.x, hop, c.z)
                 Matrix.rotateM(model, 0, c.face * -22f, 0f, 1f, 0f)
-                Matrix.scaleM(model, 0, 0.62f, 0.62f * squash, 0.62f)
+                val sz = 0.62f * c.scale
+                Matrix.scaleM(model, 0, sz, sz * squash, sz)
                 glUniformMatrix4fv(uM, 1, false, model, 0)
                 forms.getOrPut(c.species) { CreatureForms.build(c.species) }.draw(aPos, aNrm, aCol)
                 // Selection halo: a slim spinning diamond overhead.
@@ -371,6 +374,35 @@ class DenRenderer : GLSurfaceView.Renderer {
                                 c.targetX = zn.x + cos(a) * zn.r * 0.5f
                                 c.targetZ = (zn.z + sin(a) * zn.r * 0.4f).coerceIn(-2.4f, 1.6f)
                             }
+                        }
+                    }
+                }
+                // Society: the gregarious drift toward company, kin find kin,
+                // and a close encounter is a little celebration for both.
+                c.meetCd = (c.meetCd - dt).coerceAtLeast(0f)
+                if (!c.under) {
+                    var nearest: DenC? = null; var nd = Float.MAX_VALUE
+                    for (o in creatures) {
+                        if (o === c || o.under) continue
+                        val dx = o.x - c.x; val dz = o.z - c.z
+                        val d2 = dx * dx + dz * dz
+                        if (d2 < nd) { nd = d2; nearest = o }
+                    }
+                    nearest?.let { o ->
+                        val d = kotlin.math.sqrt(nd).coerceAtLeast(0.001f)
+                        var pull = (sp.social - 0.35f) * 0.5f
+                        if (o.species == c.species) pull += 0.5f     // kin seek kin
+                        if (d > 0.9f && d < 6f && c.targetX.isNaN() && c.lingerT <= 0f) {
+                            c.vx += (o.x - c.x) / d * pull * dt * 2.5f
+                            c.vz += (o.z - c.z) / d * pull * dt * 2.5f
+                        }
+                        if (d < 0.8f && c.meetCd <= 0f && o.meetCd <= 0f) {
+                            c.meetCd = 7f; o.meetCd = 7f
+                            c.happyT = maxOf(c.happyT, 1.5f)
+                            o.happyT = maxOf(o.happyT, 1.5f)
+                            heart(c.x, 1f, c.z, big = o.species == c.species)
+                            heart(o.x, 1f, o.z, false)
+                            c.vx -= (o.x - c.x) * 0.3f; c.vz -= (o.z - c.z) * 0.3f
                         }
                     }
                 }

@@ -96,7 +96,18 @@ class DenActivity : Activity() {
     private fun population(): List<Int> {
         if (devMode) return Species.ALL.indices.toList()
         val counts = dex?.optJSONArray("counts") ?: return emptyList()
-        return (0 until Species.ALL.size).filter { counts.optInt(it) > 0 }.take(12)
+        // The box comes home: repeated catches earn extra den residents of
+        // that species (a 2nd at 3 catches, a 3rd at 6), so a devoted
+        // Shadepaw-hunter gets a visible clowder, not a lone ambassador.
+        val out = mutableListOf<Int>()
+        for (s in 0 until Species.ALL.size) {
+            val n = counts.optInt(s)
+            if (n <= 0) continue
+            out += s
+            if (n >= 3) out += s
+            if (n >= 6) out += s
+        }
+        return out.take(16)
     }
 
     private fun placedFor(h: Int): MutableList<String> =
@@ -411,8 +422,10 @@ class DenActivity : Activity() {
         val sp = Species.ALL[c.species]
         val bonds = dex?.optJSONArray("bonds")
         val pts = bonds?.optInt(c.species) ?: 0
+        val caught = dex?.optJSONArray("counts")?.optInt(c.species) ?: 0
         val hearts = intArrayOf(0, 5, 12, 25, 45, 70).count { pts >= it } - 1
-        infoName?.text = "${sp.name} · the ${sp.temperament.lowercase()} one · " +
+        infoName?.text = "${sp.name}${if (caught > 1) " ×$caught" else ""} · " +
+            "the ${sp.temperament.lowercase()} one · " +
             "♥".repeat(hearts.coerceAtLeast(0)) + "♡".repeat((5 - hearts).coerceAtLeast(0))
         infoLine?.text = sp.nature
     }
