@@ -30,6 +30,7 @@ class DenC(val species: Int) {
     var under = false          // burrowers: traveling as a molehill
     var underT = 0f
     var meetCd = 0f
+    var inWater = false        // for the splash on the way in
     val scale = 0.88f + Random.nextFloat() * 0.24f
     // The biological clock: waking hours, then home to the nest to sleep.
     var nestX = 2f; var nestZ = -1f
@@ -44,6 +45,11 @@ class DenC(val species: Int) {
 private class Particle(var x: Float, var y: Float, var z: Float,
                        var vy: Float, var life: Float, var maxLife: Float,
                        var r: Float, var g: Float, var b: Float, var size: Float)
+
+private class Ripple(val x: Float, val z: Float, var age: Float = 0f)
+
+/** A standing body of water the world's physics knows about. */
+private class WaterBody(val x: Float, val z: Float, val r: Float, val warm: Boolean)
 
 class DenRenderer : GLSurfaceView.Renderer {
 
@@ -103,11 +109,23 @@ class DenRenderer : GLSurfaceView.Renderer {
     val creatures = ArrayList<DenC>()
     private val particles = ArrayList<Particle>()
     private var mainProg = 0; private var skyProg = 0; private var ptProg = 0
+    private var waterProg = 0
     private var sceneMesh: Mesh? = null
     private var itemMeshes = listOf<Mesh>()
     private val forms = HashMap<Int, Mesh>()
     private var shadowMesh: Mesh? = null
     private var nestMesh: Mesh? = null
+    private var flameMesh: Mesh? = null
+    private var glowMesh: Mesh? = null
+    private var ringMesh: Mesh? = null
+    private var waterBuf: FloatBuffer? = null
+    private var waterVerts = 0
+    // The world's elemental furniture, gathered at scene build.
+    private val flamePts = ArrayList<FloatArray>()     // x, y, z
+    private val lanternPts = ArrayList<FloatArray>()
+    private val sparklePts = ArrayList<FloatArray>()
+    private val waterBodies = ArrayList<WaterBody>()
+    private val ripples = ArrayList<Ripple>()
     private val proj = FloatArray(16); private val view = FloatArray(16)
     private val vp = FloatArray(16); private val model = FloatArray(16)
     @Volatile private var lastVp = FloatArray(16)
@@ -186,13 +204,57 @@ class DenRenderer : GLSurfaceView.Renderer {
         mainProg = DenGL.program(DenGL.MAIN_VS, DenGL.MAIN_FS)
         skyProg = DenGL.program(DenGL.SKY_VS, DenGL.SKY_FS)
         ptProg = DenGL.program(DenGL.PT_VS, DenGL.PT_FS)
+        waterProg = DenGL.program(DenGL.WATER_VS, DenGL.WATER_FS)
         glEnable(GL_DEPTH_TEST)
         forms.clear()
         shadowMesh = CreatureForms.shadow()
         nestMesh = buildNest()
+        flameMesh = MeshBuilder().apply {
+            cone(0f, 0f, 0f, 0.07f, 0f, 1f, 0f, 0.34f, android.graphics.Color.rgb(255, 150, 60), 0.9f, 6)
+            cone(0f, 0.03f, 0f, 0.04f, 0f, 1f, 0f, 0.24f, android.graphics.Color.rgb(255, 230, 130), 0.95f, 5)
+        }.bake()
+        glowMesh = MeshBuilder().apply {
+            ellipsoid(0f, 0f, 0f, 0.12f, 0.14f, 0.12f, android.graphics.Color.rgb(255, 190, 90), 0.95f, 6, 8)
+        }.bake()
+        ringMesh = MeshBuilder().apply {
+            val segs = 22
+            for (k in 0 until segs) {
+                val a0 = k * (Math.PI * 2 / segs).toFloat(); val a1 = (k + 1) * (Math.PI * 2 / segs).toFloat()
+                quad(cos(a0) * 0.9f, 0f, sin(a0) * 0.9f, cos(a1) * 0.9f, 0f, sin(a1) * 0.9f,
+                    cos(a1), 0f, sin(a1), cos(a0), 0f, sin(a0),
+                    android.graphics.Color.rgb(190, 245, 255), 0.85f, true)
+            }
+        }.bake()
+        buildWaterDisc()
         rebuild = true
         lastNs = 0L
     }
+
+    /** A tessellated unit disc whose vertices the water shader can wave. */
+    private fun buildWaterDisc() {
+        val rings = 6; val sectors = 18
+        val v = ArrayList<Float>()
+        fun pt(ri: Int, si: Int): FloatArray {
+            val r = ri.toFloat() / rings
+            val a = si * (Math.PI * 2 / sectors)
+            return floatArrayOf((cos(a) * r).toFloat(), 0f, (sin(a) * r).toFloat())
+        }
+        for (ri in 0 until rings) for (si in 0 until sectors) {
+            val a = pt(ri, si); val b = pt(ri + 1, si)
+            val c = pt(ri + 1, si + 1); val d = pt(ri, si + 1)
+            v.addAll(listOf(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]))
+            v.addAll(listOf(a[0], a[1], a[2], c[0], c[1], c[2], d[0], d[1], d[2]))
+        }
+        waterVerts = v.size / 3
+        waterBuf = ByteBuffer.allocateDirect(v.size * 4).order(ByteOrder.nativeOrder())
+            .asFloatBuffer().put(v.toFloatArray()).apply { position(0) }
+    }
+
+    private fun waterAt(x: Float, z: Float): WaterBody? =
+        waterBodies.firstOrNull {
+            val dx = x - it.x; val dz = z - it.z
+            dx * dx + dz * dz < it.r * it.r * 0.72f
+        }
 
     override fun onSurfaceChanged(gl: GL10?, w: Int, h: Int) {
         viewW = w; viewH = h
@@ -271,10 +333,30 @@ class DenRenderer : GLSurfaceView.Renderer {
         val aCol = glGetAttribLocation(mainProg, "aCol")
         glEnableVertexAttribArray(aPos); glEnableVertexAttribArray(aNrm); glEnableVertexAttribArray(aCol)
 
+        glUniform1f(glGetUniformLocation(mainProg, "uAlpha"), 1f)
         Matrix.setIdentityM(model, 0)
         glUniformMatrix4fv(uM, 1, false, model, 0)
         sceneMesh?.draw(aPos, aNrm, aCol)
         for (mesh in itemMeshes) mesh.draw(aPos, aNrm, aCol)
+
+        // The fires burn: flames flicker and sway with the actual wind.
+        val windLean = (windKmh / 10f).coerceAtMost(3f)
+        for ((i, f) in flamePts.withIndex()) {
+            Matrix.setIdentityM(model, 0)
+            Matrix.translateM(model, 0, f[0], f[1], f[2])
+            Matrix.rotateM(model, 0, sin(t * 5.5f + i * 1.7f) * 7f + windLean * 4f, 0f, 0f, 1f)
+            Matrix.scaleM(model, 0, 1f, 0.82f + 0.3f * sin(t * 7f + i * 2.3f) + 0.1f * sin(t * 13f + i), 1f)
+            glUniformMatrix4fv(uM, 1, false, model, 0)
+            flameMesh?.draw(aPos, aNrm, aCol)
+        }
+        for ((i, l) in lanternPts.withIndex()) {
+            Matrix.setIdentityM(model, 0)
+            Matrix.translateM(model, 0, l[0], l[1], l[2])
+            val pulse = 1f + 0.1f * sin(t * 3f + i * 2f) + 0.04f * sin(t * 11f + i)
+            Matrix.scaleM(model, 0, pulse, pulse, pulse)
+            glUniformMatrix4fv(uM, 1, false, model, 0)
+            glowMesh?.draw(aPos, aNrm, aCol)
+        }
 
         synchronized(creatures) {
             // Nests first, so their residents sit on top.
@@ -333,7 +415,52 @@ class DenRenderer : GLSurfaceView.Renderer {
                 }
             }
         }
+        // Ripple rings expand and fade on the ponds.
+        if (ripples.isNotEmpty()) {
+            glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE)
+            glDepthMask(false)
+            val uAlpha = glGetUniformLocation(mainProg, "uAlpha")
+            for (rp in ripples) {
+                val s = 0.22f + rp.age * 1.3f
+                glUniform1f(uAlpha, (1f - rp.age / 0.9f).coerceIn(0f, 1f) * 0.75f)
+                Matrix.setIdentityM(model, 0)
+                Matrix.translateM(model, 0, rp.x, 0.06f, rp.z)
+                Matrix.scaleM(model, 0, s, 1f, s * 0.8f)
+                glUniformMatrix4fv(uM, 1, false, model, 0)
+                ringMesh?.draw(aPos, aNrm, aCol)
+            }
+            glUniform1f(uAlpha, 1f)
+            glDepthMask(true)
+            glDisable(GL_BLEND)
+        }
         glDisableVertexAttribArray(aPos); glDisableVertexAttribArray(aNrm); glDisableVertexAttribArray(aCol)
+
+        // The living water: waved surfaces over every pond and spring.
+        waterBuf?.let { wb ->
+            glUseProgram(waterProg)
+            glUniformMatrix4fv(glGetUniformLocation(waterProg, "uVP"), 1, false, vp, 0)
+            glUniform1f(glGetUniformLocation(waterProg, "uT"), t)
+            glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE)
+            glDepthMask(false)
+            val aW = glGetAttribLocation(waterProg, "aPos")
+            glEnableVertexAttribArray(aW)
+            wb.position(0)
+            glVertexAttribPointer(aW, 3, GL_FLOAT, false, 12, wb)
+            val uMW = glGetUniformLocation(waterProg, "uM")
+            val uCol = glGetUniformLocation(waterProg, "uCol")
+            for (w in waterBodies) {
+                Matrix.setIdentityM(model, 0)
+                Matrix.translateM(model, 0, w.x, 0.07f, w.z)
+                Matrix.scaleM(model, 0, w.r * 0.95f, 1f, w.r * 0.72f)
+                glUniformMatrix4fv(uMW, 1, false, model, 0)
+                if (w.warm) glUniform3f(uCol, 0.85f, 0.65f, 0.45f)   // the hot spring steams gold
+                else glUniform3f(uCol, 0.35f, 0.8f, 0.95f)
+                glDrawArrays(GL_TRIANGLES, 0, waterVerts)
+            }
+            glDisableVertexAttribArray(aW)
+            glDepthMask(true)
+            glDisable(GL_BLEND)
+        }
 
         drawParticles()
     }
@@ -377,6 +504,25 @@ class DenRenderer : GLSurfaceView.Renderer {
         }
         for (biome in Habitats.BIOMES) biome.decor(b)
         sceneMesh = b.bake()
+        // Gather the elemental furniture: fires, lamps, waters, crystals.
+        flamePts.clear(); lanternPts.clear(); sparklePts.clear(); waterBodies.clear()
+        for (zone in Habitats.ZONES) when (zone.kind) {
+            "WATER" -> waterBodies += WaterBody(zone.x, zone.z, zone.r,
+                warm = zone.x in 28f..41f)
+            "EMBER" -> for (k in 0..3) {
+                val a = k * 1.57f + 0.4f
+                flamePts += floatArrayOf(zone.x + cos(a) * zone.r * 0.5f, 0.16f,
+                    zone.z + sin(a) * zone.r * 0.4f)
+            }
+        }
+        for (i in 0..4) lanternPts += floatArrayOf(29f + i * 2.8f, 1.2f, -2.6f)
+        for (i in 0..5) sparklePts += floatArrayOf(42f + i * 2.2f,
+            0.7f + (i % 3) * 0.3f, -2.8f - (i % 2) * 0.8f)
+        for ((i, id) in placedIds.withIndex()) when (id) {
+            "lantern" -> lanternPts += floatArrayOf(Habitats.slotX(i), 1.06f, Habitats.SLOT_Z)
+            "pool" -> waterBodies += WaterBody(Habitats.slotX(i), Habitats.SLOT_Z, 0.6f, warm = false)
+            "gems" -> sparklePts += floatArrayOf(Habitats.slotX(i), 0.35f, Habitats.SLOT_Z)
+        }
         itemMeshes = placedIds.mapIndexedNotNull { i, id ->
             Habitats.item(id)?.let { item ->
                 val ib = MeshBuilder()
@@ -596,6 +742,20 @@ class DenRenderer : GLSurfaceView.Renderer {
 
                 c.x = (c.x + c.vx * dt).coerceIn(0.8f, w - 0.8f)
                 c.z = (c.z + c.vz * dt).coerceIn(-2.4f, 1.6f)
+                // Water physics: a splash going in, bow ripples while moving.
+                if (!c.under) {
+                    val wading = waterAt(c.x, c.z) != null
+                    if (wading && !c.inWater) {
+                        ripples += Ripple(c.x, c.z)
+                        for (s in 0..5) particles += Particle(
+                            c.x + Random.nextFloat() * 0.3f - 0.15f, 0.15f, c.z + 0.1f,
+                            0.8f + Random.nextFloat() * 0.7f, 0f, 0.5f,
+                            0.55f, 0.85f, 0.95f, 16f)
+                    }
+                    c.inWater = wading
+                    if (wading && (c.vx * c.vx + c.vz * c.vz) > 0.02f &&
+                        Random.nextFloat() < dt * 1.6f) ripples += Ripple(c.x, c.z)
+                }
                 if (sp.motion == Species.SWIM) {
                     val pools = Habitats.ZONES.filter { it.kind == "WATER" }
                     val zn = pools.minByOrNull {
@@ -643,7 +803,39 @@ class DenRenderer : GLSurfaceView.Renderer {
                 -0.55f, 0f, 5f,
                 0.95f, 0.97f, 1f, 13f)
         }
+        // The fires breathe out sparks; springs bubble; crystals glint.
+        for (f in flamePts) if (Random.nextFloat() < dt * 2.2f) {
+            particles += Particle(
+                f[0] + Random.nextFloat() * 0.14f - 0.07f, f[1] + 0.2f, f[2],
+                0.45f + Random.nextFloat() * 0.35f, 0f, 1f + Random.nextFloat() * 0.5f,
+                1f, 0.55f + Random.nextFloat() * 0.3f, 0.2f, 10f + Random.nextFloat() * 8f)
+        }
+        for (l in lanternPts) if (Random.nextFloat() < dt * 0.7f) {
+            particles += Particle(l[0], l[1] + 0.12f, l[2],
+                0.25f, 0f, 1.2f, 1f, 0.8f, 0.45f, 8f)
+        }
+        for (w2 in waterBodies) if (w2.warm && Random.nextFloat() < dt * 3f) {
+            val a = Random.nextFloat() * 6.283f; val rr = Random.nextFloat() * w2.r * 0.6f
+            particles += Particle(w2.x + cos(a) * rr, 0.1f, w2.z + sin(a) * rr * 0.75f,
+                0.3f + Random.nextFloat() * 0.2f, 0f, 0.7f,
+                0.9f, 0.95f, 1f, 9f)
+        }
+        for (s in sparklePts) if (Random.nextFloat() < dt * 1.1f) {
+            particles += Particle(
+                s[0] + Random.nextFloat() * 0.3f - 0.15f, s[1] + Random.nextFloat() * 0.4f,
+                s[2] + Random.nextFloat() * 0.2f - 0.1f,
+                0.06f, 0f, 0.8f, 0.85f, 0.75f, 1f, 11f)
+        }
+        // The walker makes waves too.
+        if (waterAt(camPX, camPZ) != null && (abs(moveX) > 0.1f || abs(moveY) > 0.1f) &&
+            Random.nextFloat() < dt * 2.5f) ripples += Ripple(camPX, camPZ)
+
+        for (rp in ripples) rp.age += dt
+        ripples.removeAll { it.age > 0.9f }
+        if (ripples.size > 24) ripples.subList(0, ripples.size - 24).clear()
+
         val wind = (windKmh / 30f).coerceIn(0f, 1.5f)
+        val splashes = ArrayList<Particle>(4)
         val it = particles.iterator()
         while (it.hasNext()) {
             val p = it.next()
@@ -651,8 +843,18 @@ class DenRenderer : GLSurfaceView.Renderer {
             p.y += p.vy * dt * 30f * dt + p.vy * dt
             p.x += sin(p.life * 2f + p.z) * dt * 0.15f +
                 (if (p.vy < -0.1f) wind * dt * 1.2f else 0f)   // weather rides the wind
-            if (p.life >= p.maxLife || p.y < 0.02f && p.vy < -1f) it.remove()
+            if (p.life >= p.maxLife || p.y < 0.02f && p.vy < -1f) {
+                // Raindrops land somewhere real: a splash, or a ring on water.
+                if (p.vy < -1f && p.y < 0.02f) {
+                    splashes += Particle(p.x, 0.06f, p.z, 0.5f, 0f, 0.22f,
+                        0.6f, 0.8f, 0.95f, 7f)
+                    if (waterAt(p.x, p.z) != null && Random.nextFloat() < 0.2f)
+                        ripples += Ripple(p.x, p.z)
+                }
+                it.remove()
+            }
         }
+        particles.addAll(splashes)
     }
 
     /**

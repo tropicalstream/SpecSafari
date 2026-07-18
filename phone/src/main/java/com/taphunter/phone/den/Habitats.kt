@@ -57,8 +57,8 @@ object Habitats {
         val x = zone.x; val z = zone.z; val r = zone.r
         when (zone.kind) {
             "WATER" -> {
-                b.ellipsoid(x, 0.04f, z, r, 0.035f, r * 0.75f, Color.rgb(50, 170, 210), 0.55f, 4, 14)
-                b.ellipsoid(x, 0.055f, z, r * 0.55f, 0.03f, r * 0.4f, Color.rgb(90, 220, 245), 0.4f, 3, 10)
+                // The dark bed only; the living surface is rendered dynamically.
+                b.ellipsoid(x, 0.04f, z, r, 0.035f, r * 0.75f, Color.rgb(30, 90, 120), 0.2f, 4, 14)
                 for (k in 0..5) {
                     val a = k * 1.047f
                     rock(b, x + cos(a) * r * 1.05f, z + sin(a) * r * 0.8f, 0.34f, Color.rgb(66, 84, 96))
@@ -85,11 +85,11 @@ object Habitats {
                 b.ellipsoid(x - r * 0.15f, 0.18f, z - r * 0.45f, 0.4f, 0.2f, 0.3f, Color.rgb(24, 76, 52))
             }
             "EMBER" -> {
+                // Dark vents only; the fire itself burns dynamically.
                 for (k in 0..3) {
                     val a = k * 1.57f + 0.4f
                     val px = x + cos(a) * r * 0.5f; val pz = z + sin(a) * r * 0.4f
                     b.cone(px, 0f, pz, 0.12f, 0f, 1f, 0f, 0.22f, Color.rgb(60, 36, 32))
-                    b.cone(px, 0.1f, pz, 0.05f, 0f, 1f, 0f, 0.3f, Color.rgb(255, 160, 60), 0.9f, 5)
                 }
                 rock(b, x, z - r * 0.3f, 0.5f, Color.rgb(74, 44, 36))
             }
@@ -164,7 +164,8 @@ object Habitats {
                 for (i in 0..4) {
                     val x = 29f + i * 2.8f
                     b.box(x, 0.55f, -2.6f, 0.05f, 0.55f, 0.05f, Color.rgb(50, 34, 34))
-                    b.ellipsoid(x, 1.2f, -2.6f, 0.14f, 0.18f, 0.14f, Color.rgb(255, 170, 70), 0.95f, 6, 8)
+                    // The lamp itself glows dynamically; this is just the housing.
+                    b.box(x, 1.2f, -2.6f, 0.1f, 0.14f, 0.1f, Color.rgb(64, 46, 42))
                 }
                 for (i in 0..5) rock(b, 28.6f + i * 2.3f, -3.4f,
                     0.7f + (i % 3) * 0.3f, Color.rgb(70, 40, 34))
@@ -272,7 +273,7 @@ object Habitats {
             { b, x, z ->
                 b.box(x, 0.5f, z, 0.05f, 0.5f, 0.05f, Color.rgb(56, 40, 40))
                 b.box(x, 1.06f, z, 0.14f, 0.16f, 0.14f, Color.rgb(70, 52, 46))
-                b.ellipsoid(x, 1.06f, z, 0.1f, 0.12f, 0.1f, Color.rgb(255, 190, 90), 0.95f, 5, 7)
+                // Its flame is lit dynamically by the renderer.
             }),
         ItemDef("nook", "TOME NOOK", 25, false, 0,
             setOf("PEDANTIC", "DROWSY", "CLEVER", "STEADFAST"), Color.rgb(190, 140, 255),

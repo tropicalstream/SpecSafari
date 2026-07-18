@@ -157,6 +157,7 @@ object DenGL {
         uniform vec3 uCam; uniform vec3 uLight; uniform vec3 uFog; uniform vec3 uRim;
         uniform float uDay;   // 0 deep night .. 1 midday
         uniform float uFogNear;
+        uniform float uAlpha; // ripple rings fade with this; solid draws pass 1.0
         varying vec3 vW; varying vec3 vN; varying vec4 vC;
         void main() {
             vec3 n = normalize(vN);
@@ -166,7 +167,31 @@ object DenGL {
             float rim = pow(1.0 - max(dot(n, view), 0.0), 2.6);
             vec3 base = vC.rgb * lit + uRim * rim * 0.32 * (1.0 - uDay * 0.5) + vC.rgb * vC.a * 1.1;
             float fog = clamp((length(uCam - vW) - uFogNear) / 16.0, 0.0, 0.9);
-            gl_FragColor = vec4(mix(base, uFog, fog), 1.0);
+            gl_FragColor = vec4(mix(base, uFog, fog), uAlpha);
+        }"""
+
+    /** The living water surface: vertices ride slow crossing waves. */
+    const val WATER_VS = """
+        uniform mat4 uVP; uniform mat4 uM; uniform float uT;
+        attribute vec3 aPos; varying vec2 vUv; varying float vH;
+        void main() {
+            vec3 p = aPos;
+            float r = length(p.xz);
+            float h = sin(r * 9.0 - uT * 2.6) * 0.5 + sin((p.x + p.z) * 7.0 + uT * 1.9) * 0.5;
+            p.y += h * 0.05 * (1.0 - r);
+            vH = h; vUv = p.xz;
+            gl_Position = uVP * (uM * vec4(p, 1.0));
+        }"""
+
+    const val WATER_FS = """
+        precision mediump float;
+        uniform vec3 uCol;
+        varying vec2 vUv; varying float vH;
+        void main() {
+            float r = length(vUv);
+            float a = (1.0 - smoothstep(0.72, 1.0, r)) * 0.6;
+            vec3 c = uCol * (0.78 + vH * 0.4);
+            gl_FragColor = vec4(c, a);
         }"""
 
     const val SKY_VS = """
