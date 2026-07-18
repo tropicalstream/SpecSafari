@@ -205,10 +205,37 @@ object HologramModels {
                 b.seg(0.75f, 1.05f, 0f, 1.0f, 0.95f, 0f, sp.accent)
                 b.eyes(sp.accent)
             }
-            else -> { // SANDSHIFT
+            23 -> { // SANDSHIFT
                 b.sphere(0f, 0.25f, 0.55f, sp.main)
                 b.lathe(floatArrayOf(-1.1f, 0.12f, -0.75f, 0.3f, -0.4f, 0.45f, -0.1f, 0.35f), sp.main)
                 b.ring(0f, 0.25f, 0f, 0.95f, 0.95f, Builder.XZ, sp.accent)
+                b.eyes(sp.accent)
+            }
+            24 -> { // ZEPHYRET
+                b.sphere(0f, 0.15f, 0.45f, sp.main)
+                b.wingSwept(-1f, sp.main)
+                b.wingSwept(1f, sp.main)
+                b.seg(-0.2f, -0.1f, -0.4f, -0.9f, 0.1f, -0.9f, sp.accent)
+                b.seg(0.2f, -0.1f, -0.4f, 0.9f, 0.05f, -0.9f, sp.accent)
+                b.ring(0f, -0.85f, 0f, 0.8f, 0.8f, Builder.XZ, sp.accent)
+                b.eyes(sp.accent)
+            }
+            25 -> { // NIXLET
+                b.sphere(0f, 0.2f, 0.5f, sp.main)
+                b.ring(0f, -0.35f, 0f, 0.85f, 0.85f, Builder.XZ, sp.accent)
+                b.ring(0f, -0.5f, 0f, 1.15f, 1.15f, Builder.XZ, sp.accent)
+                b.seg(0.4f, 0.1f, -0.2f, 0.95f, 0.5f, -0.45f, sp.accent)
+                b.seg(0.95f, 0.5f, -0.45f, 0.75f, 0.9f, -0.3f, sp.accent)
+                b.eyes(sp.accent)
+            }
+            else -> { // MOLDEWARP
+                b.lathe(floatArrayOf(-0.9f, 1.1f, -0.55f, 0.75f, -0.3f, 0.45f), sp.accent)
+                b.sphere(0f, 0.1f, 0.55f, sp.main)
+                for (i in 0 until 6) {
+                    val a = (i / 6f) * (Math.PI * 2).toFloat()
+                    b.seg(0f, -0.1f, 0.55f,
+                        cos(a) * 0.28f, -0.1f + sin(a) * 0.28f, 0.72f, sp.accent)
+                }
                 b.eyes(sp.accent)
             }
         }

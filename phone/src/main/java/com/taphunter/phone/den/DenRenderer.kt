@@ -22,8 +22,11 @@ class DenC(val species: Int) {
     var pauseT = 0f
     var happyT = 0f
     var face = 1f              // +1 facing right of world, smoothed
-    var targetX = Float.NaN    // pilgrimage toward a loved item
+    var targetX = Float.NaN    // pilgrimage toward a loved item or home zone
+    var targetZ = 0f
     var lingerT = 0f
+    var under = false          // burrowers: traveling as a molehill
+    var underT = 0f
 }
 
 private class Particle(var x: Float, var y: Float, var z: Float,
@@ -87,6 +90,8 @@ class DenRenderer : GLSurfaceView.Renderer {
         val c = creatures.getOrNull(index) ?: return
         c.happyT = if (big) 3.2f else 2f
         c.pauseT = 1f
+        // Petting the molehill summons the mole, delighted.
+        if (c.under) { c.under = false; c.underT = 6f }
     }
 
     /** Nearest creature to a screen tap, or -1. Safe from the UI thread. */
@@ -190,10 +195,21 @@ class DenRenderer : GLSurfaceView.Renderer {
         synchronized(creatures) {
             for ((i, c) in creatures.withIndex()) {
                 val sp = Species.ALL[c.species]
+                // A burrower underground is just a traveling molehill.
+                if (c.under) {
+                    Matrix.setIdentityM(model, 0)
+                    Matrix.translateM(model, 0, c.x, 0f, c.z)
+                    Matrix.scaleM(model, 0, 0.62f, 0.62f + sin(c.phase * 6f) * 0.06f, 0.62f)
+                    glUniformMatrix4fv(uM, 1, false, model, 0)
+                    forms.getOrPut(-2) { CreatureForms.mound() }.draw(aPos, aNrm, aCol)
+                    continue
+                }
                 val hop = when (sp.motion) {
                     Species.HOP -> abs(sin(c.phase * 4f)) * 0.22f
                     Species.FLOAT -> 0.25f + sin(c.phase * 1.6f) * 0.1f
                     Species.DRIFT -> 0.12f + sin(c.phase * 2.2f) * 0.07f
+                    Species.SKIM -> 0.5f + sin(c.phase * 2.6f) * 0.18f   // one hand above ground
+                    Species.SWIM -> -0.14f + sin(c.phase * 2f) * 0.05f   // hull below the waterline
                     else -> abs(sin(c.phase * 5f)) * 0.035f
                 }
                 val squash = 1f + sin(c.phase * 5f) * 0.04f +
@@ -238,6 +254,8 @@ class DenRenderer : GLSurfaceView.Renderer {
         val w = Habitats.WORLD_W
         // Big enough that a wanderer looking any direction never sees the edge.
         b.quad(-9f, 0f, 9f, w + 9f, 0f, 9f, w + 9f, 0f, -9f, -9f, 0f, -9f, hab.ground)
+        // The microhabitats first — they ARE the biosphere — then local color.
+        for (zone in hab.zones) Habitats.zoneDecor(b, zone, hab)
         hab.decor(b, w)
         sceneMesh = b.bake()
         itemMeshes = placedIds.mapIndexedNotNull { i, id ->
@@ -253,7 +271,11 @@ class DenRenderer : GLSurfaceView.Renderer {
                 creatures.clear()
                 for (s in want) creatures += DenC(s).apply {
                     x = 1f + Random.nextFloat() * (w - 2f)
-                    z = -1.1f + Random.nextFloat() * 2.2f
+                    z = -2f + Random.nextFloat() * 3.4f
+                    // Everyone wakes up at home: swimmers in water, and so on.
+                    Habitats.ALL[habitatIdx].zones.firstOrNull { it.kind == Species.ALL[s].zone }?.let {
+                        x = it.x; z = it.z.coerceIn(-2.4f, 1.6f)
+                    }
                 }
             }
         }
@@ -275,7 +297,17 @@ class DenRenderer : GLSurfaceView.Renderer {
                 if (sp.temperament in hab.loved && Random.nextFloat() < dt * 0.06f)
                     heart(c.x, 0.9f, c.z, big = false)
 
-                if (c.lingerT > 0f) {   // parked at a beloved item, soaking it in
+                // Burrowers travel the underworld between surface visits.
+                if (sp.motion == Species.BURROW) {
+                    c.underT -= dt
+                    if (c.underT <= 0f) {
+                        c.under = !c.under
+                        c.underT = if (c.under) 2.5f + Random.nextFloat() * 3f
+                        else 4f + Random.nextFloat() * 4f
+                        if (!c.under) c.happyT = maxOf(c.happyT, 0.8f)  // the triumphant pop-up
+                    }
+                }
+                if (c.lingerT > 0f) {   // parked at a beloved spot, soaking it in
                     c.lingerT -= dt
                     c.vx *= 0.8f; c.vz *= 0.8f
                     if (Random.nextFloat() < dt * 1.2f) heart(c.x, 0.85f, c.z, false)
@@ -283,10 +315,15 @@ class DenRenderer : GLSurfaceView.Renderer {
                     c.pauseT -= dt
                     c.vx *= 0.85f; c.vz *= 0.85f
                 } else if (!c.targetX.isNaN()) {
-                    // Pilgrimage: walk toward the loved item, then linger.
-                    val dx = c.targetX - c.x
-                    if (abs(dx) < 0.45f) { c.targetX = Float.NaN; c.lingerT = 3f + Random.nextFloat() * 3f }
-                    else { c.vx = (if (dx > 0) 1f else -1f) * (0.5f + sp.energy * 0.7f); c.vz = (-1.2f - c.z) * 0.4f }
+                    // Pilgrimage: make for the beloved place, then linger.
+                    val dx = c.targetX - c.x; val dz = c.targetZ - c.z
+                    val d = kotlin.math.sqrt(dx * dx + dz * dz)
+                    if (d < 0.45f) { c.targetX = Float.NaN; c.lingerT = 3f + Random.nextFloat() * 3f }
+                    else {
+                        val v = (0.5f + sp.energy * 0.7f) *
+                            (if (c.under) 2f else 1f) * (if (sp.motion == Species.SKIM) 1.8f else 1f)
+                        c.vx = dx / d * v; c.vz = dz / d * v
+                    }
                 } else {
                     val speed = (0.25f + sp.energy * 0.85f) * perky
                     when (sp.motion) {
@@ -300,6 +337,14 @@ class DenRenderer : GLSurfaceView.Renderer {
                             c.vx = cos(a) * speed * 1.6f; c.vz = sin(a) * speed * 0.9f
                             c.pauseT = 0.4f
                         }
+                        Species.SKIM -> {  // long banking slaloms, never a pause
+                            c.vx += (cos(c.phase * 0.9f) * speed * 2.4f - c.vx) * dt * 2f
+                            c.vz += (sin(c.phase * 1.3f) * speed * 1.1f - c.vz) * dt * 2f
+                        }
+                        Species.SWIM -> {  // lazy figure-eights in home water
+                            c.vx += (cos(c.phase * 0.7f) * speed * 1.2f - c.vx) * dt * 2f
+                            c.vz += (sin(c.phase * 1.4f) * speed * 0.8f - c.vz) * dt * 2f
+                        }
                         else -> {
                             c.vx += (cos(c.phase * 0.5f) * speed - c.vx) * dt * 1.5f
                             c.vz += (sin(c.phase * 0.33f) * speed * 0.5f - c.vz) * dt * 1.5f
@@ -307,17 +352,46 @@ class DenRenderer : GLSurfaceView.Renderer {
                                 c.pauseT = 0.8f + Random.nextFloat() * 1.6f
                         }
                     }
-                    // Every so often, remember there's a favorite thing here.
-                    if (Random.nextFloat() < dt * 0.10f) {
-                        val ids = placedIds
-                        for ((i, id) in ids.withIndex()) {
+                    // Every so often, remember there's a favorite place here:
+                    // a loved item first, else the microhabitat of its niche.
+                    if (Random.nextFloat() < dt * 0.14f) {
+                        var found = false
+                        for ((i, id) in placedIds.withIndex()) {
                             val item = Habitats.item(id) ?: continue
-                            if (sp.temperament in item.loved) { c.targetX = Habitats.slotX(i); break }
+                            if (sp.temperament in item.loved) {
+                                c.targetX = Habitats.slotX(i); c.targetZ = Habitats.SLOT_Z + 0.5f
+                                found = true; break
+                            }
+                        }
+                        if (!found) {
+                            val homes = hab.zones.filter { it.kind == sp.zone }
+                            if (homes.isNotEmpty()) {
+                                val zn = homes[Random.nextInt(homes.size)]
+                                val a = Random.nextFloat() * 6.283f
+                                c.targetX = zn.x + cos(a) * zn.r * 0.5f
+                                c.targetZ = (zn.z + sin(a) * zn.r * 0.4f).coerceIn(-2.4f, 1.6f)
+                            }
                         }
                     }
                 }
                 c.x = (c.x + c.vx * dt).coerceIn(0.8f, w - 0.8f)
-                c.z = (c.z + c.vz * dt).coerceIn(-1.6f, 1.2f)
+                c.z = (c.z + c.vz * dt).coerceIn(-2.4f, 1.6f)
+                // Swimmers stay in their water; the nearest pool claims them.
+                if (sp.motion == Species.SWIM) {
+                    val pools = hab.zones.filter { it.kind == "WATER" }
+                    if (pools.isNotEmpty()) {
+                        val zn = pools.minByOrNull {
+                            (it.x - c.x) * (it.x - c.x) + (it.z - c.z) * (it.z - c.z)
+                        }!!
+                        val dx = c.x - zn.x; val dz = c.z - zn.z
+                        val d = kotlin.math.sqrt(dx * dx + dz * dz)
+                        val rim = zn.r * 0.7f
+                        if (d > rim && c.targetX.isNaN()) {
+                            c.x = zn.x + dx / d * rim; c.z = zn.z + dz / d * rim
+                            c.vx -= dx / d * 0.6f; c.vz -= dz / d * 0.6f
+                        }
+                    }
+                }
                 if (abs(c.vx) > 0.05f) c.face += ((if (c.vx > 0) 1f else -1f) - c.face) * dt * 6f
             }
         }

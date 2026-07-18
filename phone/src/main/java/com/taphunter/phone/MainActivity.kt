@@ -294,6 +294,7 @@ class MainActivity : Activity() {
             if (known) {
                 info.addView(text("The ${sp.temperament.lowercase().replaceFirstChar { it.uppercase() }} one",
                     12f, Color.rgb(255, 160, 220), bold = true))
+                info.addView(text(sp.niche, 11f, Color.rgb(150, 210, 130), bold = true))
                 info.addView(text(
                     "Caught ×$count · best L$bestL · " +
                         "♥".repeat(hearts.coerceAtLeast(0)) + "♡".repeat((5 - hearts).coerceAtLeast(0)),
@@ -304,7 +305,11 @@ class MainActivity : Activity() {
             c.addView(text(
                 if (known) sp.lore else "Not yet discovered. Its haunt is listed — go look.",
                 13f, if (known) parchment else dim).apply { setPadding(0, dp(8), 0, 0) })
-            if (known) c.addView(text("“${sp.nature}”", 12.5f, dim).apply { setPadding(0, dp(4), 0, 0) })
+            if (known) {
+                c.addView(text("Field biology — ${sp.biology}", 12.5f, Color.rgb(150, 190, 165))
+                    .apply { setPadding(0, dp(6), 0, 0) })
+                c.addView(text("“${sp.nature}”", 12.5f, dim).apply { setPadding(0, dp(4), 0, 0) })
+            }
             cards.add(c)
         }
         return scroll(*cards.toTypedArray())

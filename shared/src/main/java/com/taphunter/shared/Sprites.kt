@@ -315,7 +315,7 @@ object Sprites {
                 snout(c, sp.accent, x, y + s * 0.35f, s * 0.28f)
                 eyes(c, x, y - s * 0.12f, s)
             }
-            else -> { // SANDSHIFT — the off-duty djinn
+            23 -> { // SANDSHIFT — the off-duty djinn
                 stroke.color = sp.main; stroke.strokeWidth = s * 0.2f
                 path.reset()
                 path.moveTo(x - s * 0.15f, y + s * 1.3f)
@@ -330,6 +330,66 @@ object Sprites {
                     s * 0.1f, fill)
                 eyes(c, x, y - s * 0.45f, s * 0.85f)
                 grin(c, sp.accent, x, y + s * 0.05f, s * 0.35f)
+            }
+            24 -> { // ZEPHYRET — ground-skimming sylph
+                val bank = sin(t * 6f) * 12f
+                c.save(); c.rotate(bank, x, y)
+                wing(c, sp.main, x - s * 0.8f, y - s * 0.2f, s * 0.9f, -18f)
+                wing(c, sp.main, x + s * 0.8f, y - s * 0.2f, s * 0.9f, 198f)
+                body(c, sp, x, y, s * 0.75f)
+                stroke.color = sp.accent; stroke.strokeWidth = s * 0.1f
+                path.reset()
+                path.moveTo(x - s * 0.2f, y + s * 0.5f)
+                path.quadTo(x - s * 0.9f, y + s * 0.9f, x - s * 1.5f, y + s * 0.7f)
+                c.drawPath(path, stroke)
+                path.reset()
+                path.moveTo(x + s * 0.2f, y + s * 0.5f)
+                path.quadTo(x + s * 0.9f, y + s * 0.95f, x + s * 1.45f, y + s * 0.8f)
+                c.drawPath(path, stroke)
+                eyes(c, x, y - s * 0.1f, s * 0.8f)
+                c.restore()
+                // Ground-effect shimmer beneath.
+                stroke.color = sp.accent; stroke.strokeWidth = s * 0.07f
+                c.drawLine(x - s * 0.7f, y + s * 1.35f, x + s * 0.7f, y + s * 1.35f, stroke)
+            }
+            25 -> { // NIXLET — nixie hatchling in its own ripple
+                stroke.color = sp.accent; stroke.strokeWidth = s * 0.1f
+                c.drawCircle(x, y + s * 0.55f, s * 0.95f + sin(t * 4f) * s * 0.08f, stroke)
+                stroke.strokeWidth = s * 0.06f
+                c.drawCircle(x, y + s * 0.55f, s * 1.3f + sin(t * 4f + 1f) * s * 0.1f, stroke)
+                body(c, sp, x, y - s * 0.1f, s * 0.85f)
+                path.reset()   // fin tail curling out of the ripple
+                path.moveTo(x + s * 0.5f, y + s * 0.35f)
+                path.quadTo(x + s * 1.1f, y + s * 0.55f, x + s * 0.95f, y - s * 0.15f)
+                path.quadTo(x + s * 0.85f, y + s * 0.2f, x + s * 0.45f, y + s * 0.1f)
+                path.close()
+                fill.color = sp.accent; c.drawPath(path, fill)
+                fill.color = sp.main
+                c.drawCircle(x - s * 0.45f, y - s * 0.75f, s * 0.18f, fill)  // droplet crest
+                eyes(c, x, y - s * 0.25f, s * 0.9f)
+            }
+            else -> { // MOLDEWARP — the velvet digger, mid-emergence
+                fill.color = Color.rgb(60, 44, 40)   // its molehill
+                path.reset()
+                path.moveTo(x - s * 1.2f, y + s * 1.1f)
+                path.quadTo(x, y + s * 0.35f, x + s * 1.2f, y + s * 1.1f)
+                path.close()
+                c.drawPath(path, fill)
+                body(c, sp, x, y - s * 0.15f, s * 0.85f)
+                // Star nose: a burst of tiny feelers.
+                for (i in 0..7) {
+                    val a = (i / 8f) * 6.283f
+                    stroke.color = sp.accent; stroke.strokeWidth = s * 0.09f
+                    c.drawLine(x, y + s * 0.25f,
+                        x + cos(a) * s * 0.28f, y + s * 0.25f + sin(a) * s * 0.28f, stroke)
+                }
+                fill.color = sp.accent
+                c.drawCircle(x, y + s * 0.25f, s * 0.1f, fill)
+                // Satin digging paws, oversized with pride.
+                fill.color = sp.accent
+                c.drawOval(RectF(x - s * 1.05f, y + s * 0.15f, x - s * 0.45f, y + s * 0.55f), fill)
+                c.drawOval(RectF(x + s * 0.45f, y + s * 0.15f, x + s * 1.05f, y + s * 0.55f), fill)
+                eyes(c, x, y - s * 0.25f, s * 0.7f)
             }
         }
     }

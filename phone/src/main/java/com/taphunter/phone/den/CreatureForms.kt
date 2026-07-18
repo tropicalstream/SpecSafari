@@ -224,7 +224,7 @@ object CreatureForms {
                 }
                 eyes(b, 0.42f, 0.3f)
             }
-            else -> { // SANDSHIFT — djinn on a whirl
+            23 -> { // SANDSHIFT — djinn on a whirl
                 b.cone(0f, 0f, 0f, 0.28f, 0f, 1f, 0f, 0.45f, a, 0.35f)
                 b.ellipsoid(0f, 0.62f, 0f, 0.3f, 0.3f, 0.28f, m, 0.2f)
                 b.ellipsoid(0f, 0.95f, 0f, 0.12f, 0.05f, 0.12f, a, 0.6f)
@@ -232,7 +232,53 @@ object CreatureForms {
                     b.ellipsoid(sx * 0.36f, 0.6f, 0.05f, 0.09f, 0.06f, 0.06f, m, 0.2f, 5, 6)
                 eyes(b, 0.68f, 0.24f)
             }
+            24 -> { // ZEPHYRET — the ground-skimmer (flies low; renderer lifts it)
+                b.ellipsoid(0f, 0.3f, 0f, 0.26f, 0.22f, 0.4f, m)
+                for (sx in intArrayOf(-1, 1)) {
+                    b.quad(sx * 0.2f, 0.4f, 0f, sx * 0.95f, 0.55f, -0.25f,
+                        sx * 0.85f, 0.3f, -0.4f, sx * 0.22f, 0.25f, -0.1f, m, 0.3f, true)
+                    b.quad(sx * 0.08f, 0.28f, -0.35f, sx * 0.5f, 0.32f, -0.95f,
+                        sx * 0.4f, 0.22f, -1.0f, sx * 0.05f, 0.2f, -0.4f, a, 0.45f, true)
+                }
+                b.cone(0f, 0.3f, 0.4f, 0.06f, 0f, 0f, 1f, 0.16f, a, 0.4f, 5)
+                eyes(b, 0.38f, 0.36f, 0.12f, 0.06f)
+            }
+            25 -> { // NIXLET — the swimmer (renderer sinks it to the waterline)
+                b.ellipsoid(0f, 0.32f, 0f, 0.3f, 0.28f, 0.32f, m, 0.15f)
+                b.quad(0.05f, 0.3f, -0.28f, 0.15f, 0.75f, -0.75f,
+                    0.05f, 0.35f, -0.95f, -0.05f, 0.25f, -0.4f, a, 0.5f, true)
+                b.ellipsoid(0f, 0.62f, 0.1f, 0.09f, 0.12f, 0.09f, a, 0.5f, 5, 6)
+                ring(b)
+                eyes(b, 0.4f, 0.28f)
+            }
+            else -> { // MOLDEWARP — the burrower (renderer swaps it for a mound underground)
+                b.ellipsoid(0f, 0.3f, 0f, 0.32f, 0.3f, 0.38f, m)
+                // Star nose: a ring of tiny feeler cones.
+                for (i in 0 until 8) {
+                    val ang = (i / 8f) * 6.283f
+                    b.cone(0f, 0.28f, 0.36f, 0.02f,
+                        kotlin.math.cos(ang) * 0.5f, kotlin.math.sin(ang) * 0.5f, 1f, 0.14f, a, 0.5f, 4)
+                }
+                b.ellipsoid(0f, 0.28f, 0.4f, 0.06f, 0.06f, 0.05f, a, 0.6f, 4, 6)
+                for (sx in intArrayOf(-1, 1))
+                    b.ellipsoid(sx * 0.34f, 0.16f, 0.15f, 0.14f, 0.08f, 0.18f, a, 0.2f, 5, 6)
+                eyes(b, 0.44f, 0.3f, 0.13f, 0.055f)
+            }
         }
+        return b.bake()
+    }
+
+    /** Nixlet's personal ripple: two flattened rings at the waterline. */
+    private fun ring(b: MeshBuilder) {
+        b.ellipsoid(0f, 0.08f, 0f, 0.5f, 0.02f, 0.5f, android.graphics.Color.rgb(180, 255, 220), 0.5f, 3, 12)
+        b.ellipsoid(0f, 0.05f, 0f, 0.68f, 0.015f, 0.68f, android.graphics.Color.rgb(140, 230, 255), 0.35f, 3, 12)
+    }
+
+    /** The moving molehill a burrower travels as. */
+    fun mound(): Mesh {
+        val b = MeshBuilder()
+        b.cone(0f, 0f, 0f, 0.42f, 0f, 1f, 0f, 0.34f, android.graphics.Color.rgb(52, 38, 34), 0f, 9)
+        b.ellipsoid(0f, 0.3f, 0f, 0.1f, 0.06f, 0.1f, android.graphics.Color.rgb(80, 58, 48), 0.1f, 4, 6)
         return b.bake()
     }
 

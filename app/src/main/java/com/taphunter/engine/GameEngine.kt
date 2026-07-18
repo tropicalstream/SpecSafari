@@ -538,6 +538,23 @@ class GameEngine(
                 // Temperament is the whole physics engine.
                 val speed = 8f + sp.energy * 34f
                 when (sp.motion) {
+                    Species.BURROW -> if (Random.nextFloat() < dt * 0.3f) {
+                        // Vanish, tunnel, pop up elsewhere — the glasses-den version.
+                        pet.x = 26f + Random.nextFloat() * (denW - 52f)
+                        pet.y = 100f + Random.nextFloat() * (denH - 190f)
+                        pet.happyT = maxOf(pet.happyT, 0.6f)
+                        pet.pauseT = 1f + Random.nextFloat()
+                    }
+                    Species.SKIM -> {
+                        val a = pet.phase * 1.3f
+                        pet.vx += (kotlin.math.cos(a) * speed * 1.6f - pet.vx) * dt * 2f
+                        pet.vy += (kotlin.math.sin(a * 1.7f) * speed * 0.8f - pet.vy) * dt * 2f
+                    }
+                    Species.SWIM -> {
+                        val a = pet.phase * 0.8f
+                        pet.vx += (kotlin.math.cos(a) * speed * 0.9f - pet.vx) * dt * 2f
+                        pet.vy += (kotlin.math.sin(a * 1.9f) * speed * 0.5f - pet.vy) * dt * 2f
+                    }
                     Species.DART -> if (Random.nextFloat() < dt * sp.energy * 1.4f) {
                         val a = Random.nextFloat() * 6.283f
                         pet.vx = kotlin.math.cos(a) * speed * 2f
