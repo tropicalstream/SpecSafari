@@ -81,4 +81,9 @@ class SettingsStore(context: Context) {
     var bestLadder: Int
         get() = p.getInt("bestLadder", 0)
         set(v) { p.edit().putInt("bestLadder", v).apply() }
+
+    /** Lifetime meters walked with the hunt running (for the HunterDex). */
+    var lifetimeDistanceM: Float
+        get() = p.getFloat("lifeDistM", 0f)
+        set(v) { p.edit().putFloat("lifeDistM", v).apply() }
 }

@@ -17,7 +17,7 @@
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
-        android:label="TapHunter Beam">
+        android:label="TapHunter Hub">
 
         <activity
             android:name=".MainActivity"

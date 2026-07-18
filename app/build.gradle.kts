@@ -31,7 +31,8 @@ android {
     }
 }
 
-// Zero dependencies, zero vendor AARs, zero binary assets:
-// every chirp is synthesized at first launch, every sprite is string art.
+// Zero external dependencies, zero vendor AARs, zero binary assets:
+// every chirp is synthesized at first launch, every sprite is vector code.
 dependencies {
+    implementation(project(":shared"))
 }

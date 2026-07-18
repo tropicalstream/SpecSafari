@@ -134,6 +134,9 @@ class LocationSource(context: Context, private val onFix: (GeoPoint, Location?) 
         statusText = "PHONE GPS ±${acc.toInt()} M"
     }
 
+    /** Session meters walked, jitter-filtered by the 8 m crumb spacing. */
+    var sessionDistanceM = 0f; private set
+
     private fun accept(p: GeoPoint, acc: Float, loc: Location?) {
         current = p
         accuracyM = acc
@@ -142,6 +145,10 @@ class LocationSource(context: Context, private val onFix: (GeoPoint, Location?) 
         val now = System.currentTimeMillis()
         val last = trail.lastOrNull()
         if (last == null || GeoMath.distanceM(last.p, p) >= 8f) {
+            if (last != null) {
+                val step = GeoMath.distanceM(last.p, p)
+                if (step < 120f) sessionDistanceM += step   // teleports don't count
+            }
             trail.addLast(Crumb(p, now))
             while (trail.size > 64) trail.removeFirst()
         }

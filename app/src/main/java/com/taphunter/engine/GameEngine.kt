@@ -7,6 +7,7 @@ import com.taphunter.geo.GeoPoint
 import com.taphunter.geo.OsmPoi
 import com.taphunter.geo.OsmRepository
 import com.taphunter.geo.OsmRoad
+import com.taphunter.shared.Species
 import org.json.JSONArray
 import kotlin.math.abs
 import kotlin.random.Random
@@ -31,7 +32,7 @@ class GameEngine(
         val UPGRADE_NAMES = arrayOf("ORB POLISH", "SCANNER", "LURE CHARM", "SATCHEL")
         val UPGRADE_BLURBS = arrayOf(
             "WIDER, SLOWER CAPTURE ARC",
-            "ENGAGE QUARRY FROM FARTHER",
+            "QUARRY APPARITION FROM FARTHER",
             "RARE PRISMKIN APPEARS MORE",
             "TREASURE YIELDS MORE ESSENCE"
         )
@@ -40,6 +41,8 @@ class GameEngine(
         const val RESULT_SECONDS = 3.2f
         const val LOOT_SECONDS = 3.5f
         const val ENGAGE_SECONDS = 18f             // spec: interactions stay under 20 s
+        const val CAPTURE_RANGE_M = 3f             // spec: creatures engage only within 3 m
+        const val CHEST_RANGE_M = 6f
     }
 
     var state = State.TITLE; private set
@@ -126,10 +129,19 @@ class GameEngine(
 
     // ------------------------------------------------------------- inputs
 
-    fun onLocation(p: GeoPoint, accuracy: Float, travel: Float?) {
+    var sessionWalkedM = 0f; private set
+    private var flushedWalkedM = 0f
+
+    fun onLocation(p: GeoPoint, accuracy: Float, travel: Float?, walkedM: Float) {
         player = p
         gpsAccuracy = accuracy
         travelBearing = travel
+        sessionWalkedM = walkedM
+        // Bank lifetime distance in 25 m slices so a crash loses little.
+        if (walkedM - flushedWalkedM >= 25f) {
+            store.lifetimeDistanceM = store.lifetimeDistanceM + (walkedM - flushedWalkedM)
+            flushedWalkedM = walkedM
+        }
     }
 
     fun onHeading(deg: Float) { heading = deg; compassLive = true }
@@ -179,7 +191,7 @@ class GameEngine(
                 }
                 // Near-quarry chime, once per approach.
                 val c = spawner.creature
-                if (c != null && GeoMath.distanceM(p, c.p) <= engageRange()) {
+                if (c != null && GeoMath.distanceM(p, c.p) <= CAPTURE_RANGE_M) {
                     if (!nearAnnounced) { nearAnnounced = true; host.sound(Audio.NEAR) }
                 } else nearAnnounced = false
                 if (demo) demoWalk(dt, p)
@@ -199,7 +211,7 @@ class GameEngine(
     private fun demoWalk(dt: Float, p: GeoPoint) {
         val goal = target()?.p ?: return
         val d = GeoMath.distanceM(p, goal)
-        if (d < 3f) return
+        if (d < 1.5f) return
         val step = 1.6f * dt
         val brg = GeoMath.bearingDeg(p, goal)
         demoDriver?.invoke(GeoMath.destination(p, brg, step.coerceAtMost(d)))
@@ -296,13 +308,17 @@ class GameEngine(
         host.sound(Audio.SELECT, 1.2f, 0.5f)
     }
 
-    fun engageRange(): Float = 25f + 8f * tier(UPG_SCANNER)
+    /** Captures happen at arm's length; the scanner extends the APPARITION. */
+    fun rangeFor(s: Spawn): Float = if (s.isCreature) CAPTURE_RANGE_M else CHEST_RANGE_M
+
+    /** How far out a creature's 3D apparition materializes over the map. */
+    fun appearRange(): Float = 30f + 15f * tier(UPG_SCANNER)
 
     private fun huntClick() {
         val p = player ?: return
         val c = spawner.creature
-        if (c != null && GeoMath.distanceM(p, c.p) <= engageRange()) { startEngage(c); return }
-        val chest = spawner.treasures.firstOrNull { GeoMath.distanceM(p, it.p) <= engageRange() }
+        if (c != null && GeoMath.distanceM(p, c.p) <= CAPTURE_RANGE_M) { startEngage(c); return }
+        val chest = spawner.treasures.firstOrNull { GeoMath.distanceM(p, it.p) <= CHEST_RANGE_M }
         if (chest != null) { openChest(chest); return }
         pingT = 1.2f
         host.sound(Audio.PING)
@@ -435,6 +451,48 @@ class GameEngine(
         return bySpecies.entries
             .map { (s, list) -> Triple(s, list.size, list.maxOf { it.level }) }
             .sortedByDescending { it.third }
+    }
+
+    // -------------------------------------------------- phone companionship
+
+    /** Progress snapshot for the HunterDex on the phone. */
+    fun dexJson(): String {
+        val counts = IntArray(Species.ALL.size)
+        val best = IntArray(Species.ALL.size)
+        val firstAt = LongArray(Species.ALL.size)
+        for (e in box) {
+            counts[e.species]++
+            if (e.level > best[e.species]) best[e.species] = e.level
+            if (firstAt[e.species] == 0L || e.at < firstAt[e.species]) firstAt[e.species] = e.at
+        }
+        val sb = StringBuilder("{")
+        sb.append("\"essence\":").append(store.essence)
+        sb.append(",\"lifeCaught\":").append(store.lifetimeCaught)
+        sb.append(",\"bestLadder\":").append(store.bestLadder)
+        sb.append(",\"lifeDistM\":").append(store.lifetimeDistanceM.toInt())
+        sb.append(",\"sessionM\":").append(sessionWalkedM.toInt())
+        sb.append(",\"huntLevel\":").append(spawner.level)
+        sb.append(",\"tiers\":[").append((0..3).joinToString(",") { tier(it).toString() }).append("]")
+        sb.append(",\"counts\":[").append(counts.joinToString(",")).append("]")
+        sb.append(",\"best\":[").append(best.joinToString(",")).append("]")
+        sb.append(",\"firstAt\":[").append(firstAt.joinToString(",")).append("]")
+        sb.append("}")
+        return sb.toString()
+    }
+
+    /** Settings pushed live from the phone hub: SET <key> <value>. */
+    fun applyRemoteSetting(key: String, value: String) {
+        when (key) {
+            "sound" -> value.toIntOrNull()?.let { store.soundVolume = it }
+            "swipe" -> value.toFloatOrNull()?.let { store.swipeSens = it }
+            "safetap" -> store.safeTap = value == "1"
+            "sbs" -> store.sbs = value == "1"
+            "fliph" -> store.flipHorizontal = value == "1"
+            "flipv" -> store.flipVertical = value == "1"
+            else -> return
+        }
+        host.sound(Audio.SELECT, 1.05f, 0.4f)
+        host.applySettings()
     }
 
     private fun parseBox(json: String): MutableList<BoxEntry> {

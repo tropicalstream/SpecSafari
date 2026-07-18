@@ -8,11 +8,11 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.SystemClock
 import com.taphunter.engine.GameEngine
-import com.taphunter.engine.Species
+import com.taphunter.shared.Species
 import com.taphunter.engine.State
 import com.taphunter.geo.GeoMath
 import com.taphunter.render.MapRenderer
-import com.taphunter.render.Sprites
+import com.taphunter.shared.Sprites
 import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
@@ -137,12 +137,20 @@ class Renderer(private val g: GameEngine) {
             accent.textAlign = Paint.Align.CENTER
             val d = GeoMath.distanceM(me, tg.p)
             c.drawText(
-                if (d <= g.engageRange()) "IN RANGE - TAP!" else GeoMath.prettyDistance(d),
+                if (d <= g.rangeFor(tg)) "IN RANGE - TAP!" else GeoMath.prettyDistance(d),
                 w / 2f, 63f, accent
             )
         } else {
             c.drawText("SCOUTING THE REALM...", w / 2f, 30f, head)
         }
+
+        // Distance walked this hunt, right under the disc (spec).
+        small.textAlign = Paint.Align.CENTER
+        accent.textAlign = Paint.Align.CENTER
+        c.drawText(
+            "WALKED ${GeoMath.prettyDistance(g.sessionWalkedM)}",
+            map.lastCx, map.lastCy + map.lastRadius + 20f, accent
+        )
 
         // Status strip.
         small.textAlign = Paint.Align.LEFT

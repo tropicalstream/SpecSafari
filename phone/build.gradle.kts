@@ -31,6 +31,7 @@ android {
     }
 }
 
-// The beam is deliberately tiny: LocationManager + one RFCOMM socket.
+// LocationManager + one RFCOMM socket + the shared creature art.
 dependencies {
+    implementation(project(":shared"))
 }

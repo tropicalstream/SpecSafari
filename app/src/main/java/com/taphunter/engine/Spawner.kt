@@ -1,6 +1,7 @@
 package com.taphunter.engine
 
 import com.taphunter.geo.GeoMath
+import com.taphunter.shared.Species
 import com.taphunter.geo.GeoPoint
 import com.taphunter.geo.OsmPoi
 import com.taphunter.geo.OsmRoad

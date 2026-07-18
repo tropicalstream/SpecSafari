@@ -42,6 +42,14 @@ class LocationBeamService : Service() {
         @Volatile var linkStatus = "OFF"
         @Volatile var lastFixText = "no fix yet"
         @Volatile var fixesSent = 0
+        @Volatile var connected = false
+        @Volatile var instance: LocationBeamService? = null
+
+        /** Latest progress snapshot from the glasses, JSON (HunterDex). */
+        @Volatile var dexJson: String? = null
+
+        /** Push a settings line to the glasses; false when unlinked. */
+        fun sendLine(line: String): Boolean = instance?.sendRaw(line) ?: false
     }
 
     private val alive = AtomicBoolean(false)
@@ -71,6 +79,8 @@ class LocationBeamService : Service() {
         }
         if (alive.compareAndSet(false, true)) {
             running = true
+            instance = this
+            dexJson = loadDex()
             startForeground(1, notification())
             startLocation()
             acceptLoop()
@@ -81,6 +91,8 @@ class LocationBeamService : Service() {
     override fun onDestroy() {
         alive.set(false)
         running = false
+        connected = false
+        if (instance === this) instance = null
         linkStatus = "OFF"
         runCatching { (getSystemService(Context.LOCATION_SERVICE) as LocationManager).removeUpdates(listener) }
         runCatching { client?.close() }
@@ -118,8 +130,10 @@ class LocationBeamService : Service() {
                     runCatching { serverSocket?.close() }
                     client = socket
                     out = socket.outputStream
+                    connected = true
                     linkStatus = "BEAMING TO GLASSES"
                     lastFix?.let { send(it) }
+                    readGlasses(socket)   // spawns the DEX reader
                     // Heartbeat keeps the link honest; a dead pipe throws here.
                     while (alive.get() && socket.isConnected) {
                         Thread.sleep(5000)
@@ -130,10 +144,41 @@ class LocationBeamService : Service() {
                 } finally {
                     runCatching { client?.close() }
                     client = null; out = null
+                    connected = false
                     if (alive.get()) linkStatus = "RECONNECTING"
                 }
             }
         }.start()
+    }
+
+    /** The glasses talk back: DEX progress snapshots for the HunterDex. */
+    private fun readGlasses(socket: BluetoothSocket) {
+        Thread {
+            runCatching {
+                val reader = socket.inputStream.bufferedReader()
+                while (alive.get()) {
+                    val line = reader.readLine() ?: break
+                    if (line.startsWith("DEX ")) {
+                        val json = line.removePrefix("DEX ").trim()
+                        dexJson = json
+                        getSharedPreferences("hunterdex", Context.MODE_PRIVATE)
+                            .edit().putString("dex", json)
+                            .putLong("dexAt", System.currentTimeMillis()).apply()
+                    }
+                }
+            }
+        }.start()
+    }
+
+    private fun loadDex(): String? =
+        getSharedPreferences("hunterdex", Context.MODE_PRIVATE).getString("dex", null)
+
+    fun sendRaw(line: String): Boolean {
+        val o = out ?: return false
+        Thread {
+            runCatching { synchronized(this) { o.write((line + "\n").toByteArray()); o.flush() } }
+        }.start()
+        return true
     }
 
     private fun send(loc: Location) {

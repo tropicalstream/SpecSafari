@@ -1,11 +1,11 @@
-package com.taphunter.render
+package com.taphunter.shared
 
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
-import com.taphunter.engine.Species
+import com.taphunter.shared.Species
 import kotlin.math.cos
 import kotlin.math.sin
 

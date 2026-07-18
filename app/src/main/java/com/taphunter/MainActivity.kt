@@ -15,7 +15,9 @@ import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
+import android.widget.FrameLayout
 import com.taphunter.audio.Audio
+import com.taphunter.gl.HologramView
 import com.taphunter.engine.GameEngine
 import com.taphunter.engine.Host
 import com.taphunter.geo.Compass
@@ -49,6 +51,7 @@ class MainActivity : Activity(), Host {
     private lateinit var renderer: Renderer
     private lateinit var gameView: GameView
     private lateinit var sbsRoot: BinocularSbsLayout
+    private lateinit var holoView: HologramView
     private lateinit var location: LocationSource
     private lateinit var compass: Compass
     private lateinit var phoneLink: PhoneLink
@@ -76,13 +79,15 @@ class MainActivity : Activity(), Host {
         engine = GameEngine(store, this, osm)
         renderer = Renderer(engine)
         location = LocationSource(this) { p, _ ->
-            engine.onLocation(p, locationAccuracy(), locationTravel())
+            engine.onLocation(p, locationAccuracy(), locationTravel(), location.sessionDistanceM)
             compass.updateDeclination(p)
         }
         compass = Compass(this) { deg -> engine.onHeading(deg) }
-        phoneLink = PhoneLink(this) { lat, lon, acc ->
-            runOnUiThread { location.acceptExternal(lat, lon, acc) }
-        }
+        phoneLink = PhoneLink(
+            this,
+            onFix = { lat, lon, acc -> runOnUiThread { location.acceptExternal(lat, lon, acc) } },
+            onSetting = { k, v -> runOnUiThread { engine.applyRemoteSetting(k, v) } }
+        )
         engine.demoDriver = { p -> location.setFake(p) }
         handler.post(object : Runnable {
             override fun run() {
@@ -92,9 +97,20 @@ class MainActivity : Activity(), Host {
                 handler.postDelayed(this, 2000)
             }
         })
+        // The HunterDex on the phone stays current over the same link.
+        handler.post(object : Runnable {
+            override fun run() {
+                if (phoneLink.connected) phoneLink.send("DEX " + engine.dexJson())
+                handler.postDelayed(this, 15000)
+            }
+        })
         gameView = GameView(this, engine, renderer)
         sbsRoot = BinocularSbsLayout(this).apply { addView(gameView) }
-        setContentView(sbsRoot)
+        holoView = HologramView(this, engine) { store.sbs }
+        setContentView(FrameLayout(this).apply {
+            addView(sbsRoot)
+            addView(holoView)   // translucent, z-on-top: apparitions over the map
+        })
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         hideSystemBars()
         applySettings()
@@ -248,6 +264,7 @@ class MainActivity : Activity(), Host {
         compass.start()
         phoneLink.start()
         gameView.start()
+        holoView.onResume()
         engine.boot()
     }
 
@@ -257,6 +274,7 @@ class MainActivity : Activity(), Host {
         compass.stop()
         phoneLink.stop()
         gameView.stop()
+        holoView.onPause()
         super.onPause()
     }
 

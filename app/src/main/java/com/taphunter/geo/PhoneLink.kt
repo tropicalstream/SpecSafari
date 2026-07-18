@@ -20,7 +20,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class PhoneLink(
     context: Context,
-    private val onFix: (Double, Double, Float) -> Unit
+    private val onFix: (Double, Double, Float) -> Unit,
+    private val onSetting: (String, String) -> Unit = { _, _ -> }
 ) {
     companion object {
         val BEAM_UUID: UUID = UUID.fromString("8f6a2b58-3c0d-4e2a-9a2e-7c5b9d1f4e21")
@@ -96,17 +97,38 @@ class PhoneLink(
         }
     }
 
+    /** Ship a line to the phone (DEX snapshots); quiet no-op when unlinked. */
+    fun send(line: String) {
+        val s = socket ?: return
+        Thread {
+            runCatching {
+                synchronized(this) {
+                    s.outputStream.write((line + "\n").toByteArray())
+                    s.outputStream.flush()
+                }
+            }
+        }.start()
+    }
+
     private fun readLoop(s: BluetoothSocket) {
         val reader = s.inputStream.bufferedReader()
         while (running.get()) {
             val line = reader.readLine() ?: break
-            if (!line.startsWith("TH1 ")) continue
-            val parts = line.split(' ')
-            if (parts.size < 4) continue
-            val lat = parts[1].toDoubleOrNull() ?: continue
-            val lon = parts[2].toDoubleOrNull() ?: continue
-            val acc = parts[3].toFloatOrNull()?.takeIf { it >= 0f } ?: 30f
-            onFix(lat, lon, acc)
+            when {
+                line.startsWith("TH1 ") -> {
+                    val parts = line.split(' ')
+                    if (parts.size < 4) continue
+                    val lat = parts[1].toDoubleOrNull() ?: continue
+                    val lon = parts[2].toDoubleOrNull() ?: continue
+                    val acc = parts[3].toFloatOrNull()?.takeIf { it >= 0f } ?: 30f
+                    onFix(lat, lon, acc)
+                }
+                line.startsWith("SET ") -> {
+                    val parts = line.split(' ')
+                    if (parts.size >= 3) onSetting(parts[1], parts[2])
+                }
+                // PING keepalives fall through silently.
+            }
         }
     }
 

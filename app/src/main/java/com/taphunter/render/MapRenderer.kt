@@ -9,7 +9,8 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import com.taphunter.engine.GameEngine
 import com.taphunter.engine.Spawn
-import com.taphunter.engine.Species
+import com.taphunter.shared.Species
+import com.taphunter.shared.Sprites
 import com.taphunter.geo.GeoMath
 import com.taphunter.geo.GeoPoint
 import com.taphunter.geo.RpgNamer
@@ -21,12 +22,18 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * The realm map: heading-up, circular, half again the size of the Everyday
- * minimap it grew from (its whole reason to exist is the hunt, so it owns
- * the screen). Every real road and path is drawn; names arrive RPGified.
- * Palette is tuned for full sun: white-hot cores over saturated halos.
+ * The realm map: heading-up, circular, the same size and place as the
+ * Everyday minimap it grew from (210 px disc, centered) — the 3D creature
+ * apparitions get the drama instead. Every real road and path is drawn;
+ * names arrive RPGified. Palette is tuned for full sun: white-hot cores
+ * over saturated halos.
  */
 class MapRenderer {
+
+    /** Disc geometry of the last frame, shared with the HUD and GL layers. */
+    var lastCx = 0f; private set
+    var lastCy = 0f; private set
+    var lastRadius = 0f; private set
 
     private val roadPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.rgb(210, 240, 255); style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND
@@ -59,10 +66,11 @@ class MapRenderer {
     fun draw(c: Canvas, w: Int, h: Int, g: GameEngine, t: Float) {
         val me = g.player ?: return
         val heading = g.heading
-        // 50% larger than the Everyday widget's 210 px: a 315 px disc at 480 h.
-        val radius = min(315f * (h / 480f), w - 10f) / 2f
+        // Everyday's widget size: a 210 px disc, centered like the original.
+        val radius = min(210f * (h / 480f), w - 10f) / 2f
         val cx = w / 2f
-        val cy = h * 0.5f + 14f
+        val cy = h * 0.47f
+        lastCx = cx; lastCy = cy; lastRadius = radius
         val scale = radius / g.zoomRadius
         mPerLon = 111320.0 * cos(Math.toRadians(me.lat))
         val hRad = Math.toRadians(heading.toDouble())
@@ -153,9 +161,9 @@ class MapRenderer {
             if (place(c, name, lx, ly, roadLabel)) shown++
         }
 
-        // Scanner ring: inside it a tap engages whatever is there.
+        // Capture ring: creatures engage only at arm's length (3 m).
         strokeP.color = Color.argb(110, 120, 255, 200); strokeP.strokeWidth = 2.5f
-        c.drawCircle(cx, cy, g.engageRange() * scale, strokeP)
+        c.drawCircle(cx, cy, (GameEngine.CAPTURE_RANGE_M * scale).coerceAtLeast(7f), strokeP)
 
         // Sonar ping sweep.
         if (g.pingT > 0f) {
@@ -165,13 +173,18 @@ class MapRenderer {
             c.drawCircle(cx, cy, pr, strokeP)
         }
 
-        // Creatures and treasure.
+        // Creatures and treasure. A creature inside apparition range hands
+        // its body to the GL hologram layer; the map keeps ring and badge.
         val target = g.target()
         for (s in g.interest()) {
             val onMap = project(s.p, pt)
             val dx = pt.x - cx; val dy = pt.y - cy
             val inDisc = sqrt(dx * dx + dy * dy) <= radius - 14f
-            if (onMap && inDisc) drawSpawn(c, s, pt.x, pt.y, t, s === target)
+            if (onMap && inDisc) {
+                val dM = GeoMath.distanceM(me, s.p)
+                drawSpawn(c, s, pt.x, pt.y, t, s === target,
+                    ghost = s.isCreature && dM <= g.appearRange())
+            }
         }
         c.restore()
 
@@ -197,26 +210,29 @@ class MapRenderer {
         c.drawPath(work, strokeP)
     }
 
-    private fun drawSpawn(c: Canvas, s: Spawn, x: Float, y: Float, t: Float, isTarget: Boolean) {
+    private fun drawSpawn(
+        c: Canvas, s: Spawn, x: Float, y: Float, t: Float, isTarget: Boolean,
+        ghost: Boolean = false
+    ) {
         val pulse = 1f + sin(t * 4f) * 0.15f
         if (s.isCreature) {
             val sp = Species.ALL[s.species]
             fill.color = sp.main; fill.alpha = 100
-            c.drawCircle(x, y, 21f * pulse, fill)
+            c.drawCircle(x, y, 16f * pulse, fill)
             fill.alpha = 255
-            Sprites.creature(c, s.species, x, y, 10f, t, excited = false)
+            if (!ghost) Sprites.creature(c, s.species, x, y, 8f, t, excited = false)
             fill.color = Color.rgb(20, 40, 70)
-            val badge = RectF(x + 12f, y - 24f, x + 42f, y - 8f)
+            val badge = RectF(x + 10f, y - 22f, x + 38f, y - 7f)
             c.drawRoundRect(badge, 4f, 4f, fill)
             label.color = Color.rgb(160, 255, 200)
             c.drawText("L${s.level}", badge.left + 5f, badge.bottom - 4f, label)
             label.color = Color.rgb(255, 250, 200)
         } else {
-            Sprites.chest(c, x, y, 10f * pulse, 0f)
+            Sprites.chest(c, x, y, 8f * pulse, 0f)
         }
         if (isTarget) {
             strokeP.color = Color.rgb(255, 255, 255); strokeP.strokeWidth = 2.5f
-            c.drawCircle(x, y, 26f * pulse, strokeP)
+            c.drawCircle(x, y, 21f * pulse, strokeP)
         }
     }
 
