@@ -28,6 +28,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".den.DenActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
         <service
             android:name=".LocationBeamService"
             android:exported="false"

@@ -26,6 +26,7 @@ import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
+import android.widget.Toast
 import com.taphunter.shared.Species
 import com.taphunter.shared.Sprites
 import org.json.JSONObject
@@ -244,7 +245,24 @@ class MainActivity : Activity() {
         val counts = d?.optJSONArray("counts")
         val best = d?.optJSONArray("best")
         val bonds = d?.optJSONArray("bonds")
+        val devMode = getSharedPreferences("mirror", Context.MODE_PRIVATE).getBoolean("devMode", false)
         val discovered = (0 until Species.ALL.size).count { (counts?.optInt(it) ?: 0) > 0 }
+        // The door to the den sits on top of the Dex.
+        val denCard = card().apply {
+            background = GradientDrawable().apply {
+                setColor(Color.rgb(16, 40, 38))
+                cornerRadius = dp(10).toFloat()
+                setStroke(dp(2), teal)
+            }
+            addView(text("⌂ CREATURE DEN", 19f, teal, bold = true, serif = true))
+            addView(text(
+                "Stroll a 3D habitat with your companions — pet them, feed them, " +
+                    "furnish their world. Tap to enter.", 13f, parchment))
+            setOnClickListener {
+                startActivity(android.content.Intent(this@MainActivity,
+                    com.taphunter.phone.den.DenActivity::class.java))
+            }
+        }
         val headerCard = card().apply {
             addView(text("HunterDex", 19f, gold, bold = true, serif = true))
             addView(text(
@@ -254,14 +272,14 @@ class MainActivity : Activity() {
                     "spoil with treats.",
                 13.5f, parchment))
         }
-        val cards = mutableListOf<View>(headerCard)
+        val cards = mutableListOf<View>(denCard, headerCard)
         for (i in Species.ALL.indices) {
             val sp = Species.ALL[i]
             val count = counts?.optInt(i) ?: 0
             val bestL = best?.optInt(i) ?: 0
             val bondPts = bonds?.optInt(i) ?: 0
             val hearts = intArrayOf(0, 5, 12, 25, 45, 70).count { bondPts >= it } - 1
-            val known = count > 0
+            val known = count > 0 || devMode
             val c = card()
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             row.addView(SpriteView(this, i, known), LinearLayout.LayoutParams(dp(72), dp(72)))
@@ -431,6 +449,49 @@ class MainActivity : Activity() {
         c.addView(switchRow("Flip swipe vertical", "flipv", false, "flipv"))
         c.addView(switchRow("SBS 3D mode", "sbs", true, "sbs"))
 
+        // ------------------------------------------------- the danger drawer
+        val danger = card()
+        danger.addView(text("The Workshop", 17f, gold, bold = true, serif = true))
+        @Suppress("UseSwitchCompatOrMaterialCode")
+        val devSw = Switch(this).apply {
+            text = "Dev mode (reveal all creatures, free den items)"
+            textSize = 14f; setTextColor(parchment); typeface = Typeface.DEFAULT_BOLD
+            isChecked = prefs.getBoolean("devMode", false)
+            setPadding(0, dp(10), 0, 0)
+            setOnCheckedChangeListener { _, on ->
+                prefs.edit().putBoolean("devMode", on).apply()
+            }
+        }
+        danger.addView(devSw)
+        danger.addView(Button(this).apply {
+            text = "RESET GAME"
+            textSize = 14f; typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.rgb(255, 120, 110))
+            setBackgroundColor(Color.rgb(40, 22, 26))
+            setOnClickListener {
+                android.app.AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Reset everything?")
+                    .setMessage(
+                        "Wipes the glasses save — creatures, essence, bonds, gear — " +
+                            "and the phone den. The glasses must be linked. There is no undo.")
+                    .setPositiveButton("WIPE IT ALL") { _, _ ->
+                        val sent = LocationBeamService.sendLine("SET reset 1")
+                        getSharedPreferences("den", Context.MODE_PRIVATE).edit().clear().apply()
+                        getSharedPreferences("hunterdex", Context.MODE_PRIVATE).edit().clear().apply()
+                        LocationBeamService.dexJson = null
+                        dex = null
+                        Toast.makeText(this@MainActivity,
+                            if (sent) "The realm forgets. Walk anew."
+                            else "Phone wiped — link the glasses and reset again for the full wipe.",
+                            Toast.LENGTH_LONG).show()
+                    }
+                    .setNegativeButton("KEEP MY LIFE'S WORK", null)
+                    .show()
+            }
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(12) })
+
         val note = card()
         note.addView(text("Field Notes", 17f, gold, bold = true, serif = true))
         note.addView(text(
@@ -439,6 +500,6 @@ class MainActivity : Activity() {
                 "opens from 10 meters, and everything waits ON the street — " +
                 "never inside a building. The realm redraws itself wherever you roam.",
             13f, parchment))
-        return scroll(c, note)
+        return scroll(c, danger, note)
     }
 }

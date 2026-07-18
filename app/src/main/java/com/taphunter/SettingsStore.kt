@@ -96,4 +96,7 @@ class SettingsStore(context: Context) {
     var bondCsv: String
         get() = p.getString("bonds", "") ?: ""
         set(v) { p.edit().putString("bonds", v).apply() }
+
+    /** The nuclear option, invoked from the phone hub's Reset Game. */
+    fun wipe() { p.edit().clear().apply() }
 }

@@ -77,11 +77,15 @@ class LocationSource(context: Context, private val onFix: (GeoPoint, Location?) 
             }
         }
         statusText = "LISTENING ON ${wanted.joinToString(",").uppercase()}"
-        // Seed from whatever the OS remembers so the map appears instantly.
+        // Seed from whatever the OS remembers so the map appears instantly —
+        // but not a fix from another city: a seed older than 5 minutes is
+        // worse than a brief blank (drive somewhere new and yesterday's
+        // last-known would flash the old town before the first real fix).
         if (current == null) {
             runCatching {
                 all.mapNotNull { manager.getLastKnownLocation(it) }
                     .maxByOrNull { it.time }
+                    ?.takeIf { System.currentTimeMillis() - it.time < 5 * 60_000L }
                     ?.let { deliver(it) }
             }
         }

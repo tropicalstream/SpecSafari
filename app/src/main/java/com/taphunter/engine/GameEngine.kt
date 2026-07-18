@@ -705,6 +705,24 @@ class GameEngine(
             "sbs" -> store.sbs = value == "1"
             "fliph" -> store.flipHorizontal = value == "1"
             "flipv" -> store.flipVertical = value == "1"
+            // Phone den commerce: essence spent and bonds earned on the phone
+            // land here so the glasses save stays the single truth.
+            "spend" -> value.toIntOrNull()?.let { store.essence = store.essence - it } ?: return
+            "bond" -> {
+                val parts = value.split(':')
+                val s = parts.getOrNull(0)?.toIntOrNull() ?: return
+                val pts = parts.getOrNull(1)?.toIntOrNull() ?: return
+                if (s in Species.ALL.indices) addBond(s, pts.coerceIn(1, 8)) else return
+            }
+            "reset" -> {
+                store.wipe()
+                box = parseBox(store.boxJson)
+                bondsLoaded = false
+                denPets.clear()
+                engageTarget = null
+                menuIdx = 0
+                state = State.TITLE; stateT = 0f
+            }
             else -> return
         }
         host.sound(Audio.SELECT, 1.05f, 0.4f)
