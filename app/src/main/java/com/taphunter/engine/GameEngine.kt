@@ -65,6 +65,8 @@ class GameEngine(
     private var targetIdx = 0
     var pingT = 0f; private set
     private var nearAnnounced = false
+    private var nearChimeCd = 0f
+    private var targetChimeCd = 0f
     private var ensureCd = 0f
 
     /** Demo stroll (adb): the fake hunter walks toward the target by itself. */
@@ -185,20 +187,36 @@ class GameEngine(
             State.HUNT -> {
                 val p = player ?: return
                 ensureCd -= dt
+                nearChimeCd = (nearChimeCd - dt).coerceAtLeast(0f)
+                targetChimeCd = (targetChimeCd - dt).coerceAtLeast(0f)
                 if (ensureCd <= 0f) {
                     ensureCd = 2.5f
                     osm.ensureAround(p)
                     spawner.creature?.let { c ->
                         if (GeoMath.distanceM(p, c.p) > 250f) osm.ensureAround(c.p)
                     }
-                    if (spawner.ensure(p, travelBearing, roads, pois, tier(UPG_CHARM))) {
-                        host.sound(Audio.TARGET, 1f, 0.8f)
+                    // A garbage fix must not scatter spawns around the map;
+                    // only the first creature may place off a coarse guess.
+                    if (spawner.creature == null || gpsAccuracy <= 60f || demo) {
+                        if (spawner.ensure(p, travelBearing, roads, pois, tier(UPG_CHARM)) &&
+                            targetChimeCd <= 0f
+                        ) {
+                            targetChimeCd = 12f
+                            host.sound(Audio.TARGET, 1f, 0.8f)
+                        }
                     }
                 }
-                // Near-quarry chime, once per approach.
+                // Near-quarry chime: once per approach, never off a wild fix,
+                // never more than once in 20 s.
                 val c = spawner.creature
-                if (c != null && GeoMath.distanceM(p, c.p) <= CAPTURE_RANGE_M) {
-                    if (!nearAnnounced) { nearAnnounced = true; host.sound(Audio.NEAR) }
+                if (c != null && GeoMath.distanceM(p, c.p) <= CAPTURE_RANGE_M &&
+                    (demo || gpsAccuracy <= 30f)
+                ) {
+                    if (!nearAnnounced && nearChimeCd <= 0f) {
+                        nearAnnounced = true
+                        nearChimeCd = 20f
+                        host.sound(Audio.NEAR)
+                    }
                 } else nearAnnounced = false
                 if (demo) demoWalk(dt, p)
             }

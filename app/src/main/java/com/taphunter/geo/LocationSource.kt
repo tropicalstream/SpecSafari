@@ -148,20 +148,43 @@ class LocationSource(context: Context, private val onFix: (GeoPoint, Location?) 
     /** Session meters walked, jitter-filtered by the 8 m crumb spacing. */
     var sessionDistanceM = 0f; private set
 
-    private fun accept(p: GeoPoint, acc: Float, loc: Location?) {
+    private fun accept(pRaw: GeoPoint, acc: Float, loc: Location?) {
+        val nowElapsed = SystemClock.elapsedRealtime()
+        // Jitter discipline: an indoor ±100 m estimate teleports every second;
+        // a wearer walks at ~1.5 m/s. Fixes farther than plausible movement
+        // NUDGE the smoothed position (weighted by their quality) instead of
+        // snapping it — a real relocation still converges within seconds,
+        // but the map stops leaping around the standing hunter.
+        val prev = current
+        val p: GeoPoint
+        if (fake || prev == null) {
+            p = pRaw
+        } else {
+            val dt = ((nowElapsed - lastFixElapsed) / 1000f).coerceIn(0.2f, 30f)
+            val d = GeoMath.distanceM(prev, pRaw)
+            val plausible = 4f * dt + 10f
+            p = if (d <= plausible) pRaw else {
+                val w = (25f / acc.coerceAtLeast(1f)).coerceIn(0.10f, 1f)
+                GeoMath.destination(prev, GeoMath.bearingDeg(prev, pRaw), d * w)
+            }
+        }
         current = p
         accuracyM = acc
-        lastFixElapsed = SystemClock.elapsedRealtime()
+        lastFixElapsed = nowElapsed
         if (!fake) statusText = "FIX ${loc?.provider?.uppercase() ?: "?"} ±${acc.toInt()} M"
-        val now = System.currentTimeMillis()
-        val last = trail.lastOrNull()
-        if (last == null || GeoMath.distanceM(last.p, p) >= 8f) {
-            if (last != null) {
-                val step = GeoMath.distanceM(last.p, p)
-                if (step < 120f) sessionDistanceM += step   // teleports don't count
+        // Breadcrumbs and walked meters only from trustworthy fixes: a coarse
+        // indoor guess is not a stroll.
+        if (fake || acc <= 35f) {
+            val now = System.currentTimeMillis()
+            val last = trail.lastOrNull()
+            if (last == null || GeoMath.distanceM(last.p, p) >= 8f) {
+                if (last != null) {
+                    val step = GeoMath.distanceM(last.p, p)
+                    if (step < 120f) sessionDistanceM += step   // teleports don't count
+                }
+                trail.addLast(Crumb(p, now))
+                while (trail.size > 64) trail.removeFirst()
             }
-            trail.addLast(Crumb(p, now))
-            while (trail.size > 64) trail.removeFirst()
         }
         onFix(p, loc)
     }
