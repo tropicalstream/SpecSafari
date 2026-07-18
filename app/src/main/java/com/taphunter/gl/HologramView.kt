@@ -103,10 +103,11 @@ class HologramView(
             val lw = if (split) surfaceW / 2 else surfaceW
             val lh = surfaceH
 
-            // The Canvas map's disc geometry, recomputed identically.
+            // The Canvas map's disc geometry, recomputed identically
+            // (upper-right corner, Everyday size).
             val radius = min(210f * (lh / 480f), lw - 10f) / 2f
-            val cx = lw / 2f
-            val cy = lh * 0.47f
+            val cx = lw - radius - 6f
+            val cy = radius + 10f
             val scale = radius / engine.zoomRadius
 
             // Equirect projection rotated to heading-up (same as MapRenderer).

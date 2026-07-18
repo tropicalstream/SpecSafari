@@ -122,53 +122,90 @@ class Renderer(private val g: GameEngine) {
     private fun drawHunt(c: Canvas, w: Int, h: Int, t: Float) {
         map.draw(c, w, h, g, t)
 
-        // Objective banner.
+        // Tight text rail down the map's left flank (Mars's layout: the disc
+        // owns the upper right, words hug it, the world below stays clear).
+        val railLeft = 8f
+        val railRight = (map.lastCx - map.lastRadius - 8f).coerceAtLeast(96f)
+        val railW = railRight - railLeft
+        var y = 26f
+        head.textAlign = Paint.Align.LEFT
+        body.textAlign = Paint.Align.LEFT
+        small.textAlign = Paint.Align.LEFT
+        accent.textAlign = Paint.Align.LEFT
+
         val tg = g.target()
         val me = g.player
-        head.textAlign = Paint.Align.CENTER
-        body.textAlign = Paint.Align.CENTER
         if (tg != null && me != null) {
-            val what = if (tg.isCreature)
-                "L${tg.level} ${Species.ALL[tg.species].name}" else "TREASURE"
             head.color = if (tg.isCreature) Species.ALL[tg.species].main else Color.rgb(255, 210, 40)
-            c.drawText(what, w / 2f, 24f, head)
+            head.textSize = 15f
+            val what = if (tg.isCreature) "L${tg.level} ${Species.ALL[tg.species].name}" else "TREASURE"
+            head.drawScaled(c, what, railLeft, y, railW)
             head.color = Color.rgb(140, 255, 210)
-            body.drawScaled(c, tg.placeName, w / 2f, 44f, w - 24f)
-            accent.textAlign = Paint.Align.CENTER
+            head.textSize = 20f
+            y += 6f
+            body.textSize = 11f
+            for (line in wrap(body, tg.placeName, railW, 3)) {
+                y += 13f
+                c.drawText(line, railLeft, y, body)
+            }
+            body.textSize = 15f
+            y += 17f
             val d = GeoMath.distanceM(me, tg.p)
-            c.drawText(
-                if (d <= g.rangeFor(tg)) "IN RANGE - TAP!" else GeoMath.prettyDistance(d),
-                w / 2f, 63f, accent
+            accent.textSize = 14f
+            accent.drawScaled(
+                c,
+                if (d <= g.rangeFor(tg)) "IN RANGE-TAP!" else GeoMath.prettyDistance(d),
+                railLeft, y, railW
             )
+            accent.textSize = 15f
         } else {
-            c.drawText("SCOUTING THE REALM...", w / 2f, 30f, head)
+            head.textSize = 13f
+            head.drawScaled(c, "SCOUTING...", railLeft, y, railW)
+            head.textSize = 20f
         }
 
-        // Distance walked this hunt, right under the disc (spec).
-        small.textAlign = Paint.Align.CENTER
-        accent.textAlign = Paint.Align.CENTER
-        c.drawText(
-            "WALKED ${GeoMath.prettyDistance(g.sessionWalkedM)}",
-            map.lastCx, map.lastCy + map.lastRadius + 20f, accent
-        )
-
-        // Status strip.
-        small.textAlign = Paint.Align.LEFT
-        Sprites.gem(c, 12f, h - 14f, 6f)
-        c.drawText("${g.essence}", 24f, h - 9f, small)
-        small.textAlign = Paint.Align.CENTER
-        c.drawText("HUNT L${g.spawner.level}", w / 2f, h - 9f, small)
-        small.textAlign = Paint.Align.RIGHT
-        c.drawText("${g.zoomRadius.toInt()} M", w - 10f, h - 9f, small)
+        // Walked + hunt stats, stacked snugly.
+        y += 22f
+        accent.textSize = 12f
+        accent.drawScaled(c, "WALKED ${GeoMath.prettyDistance(g.sessionWalkedM)}", railLeft, y, railW)
+        accent.textSize = 15f
+        y += 16f
+        Sprites.gem(c, railLeft + 5f, y - 4f, 5f)
+        small.textSize = 12f
+        c.drawText("${g.essence}", railLeft + 14f, y, small)
+        y += 15f
+        c.drawText("HUNT L${g.spawner.level}", railLeft, y, small)
+        y += 15f
+        c.drawText("${g.zoomRadius.toInt()} M ZOOM", railLeft, y, small)
         if (!g.compassLive || g.gpsAccuracy > 60f) {
-            small.textAlign = Paint.Align.CENTER
+            small.textSize = 10f
             small.color = Color.rgb(255, 150, 120)
-            c.drawText(
-                if (!g.compassLive) "COMPASS WARMING UP" else "WEAK SKY SIGNAL",
-                w / 2f, h - 26f, small
-            )
+            val warn = if (!g.compassLive) "COMPASS WARMING UP" else "WEAK SKY SIGNAL"
+            for (line in wrap(small, warn, railW, 2)) {
+                y += 12f
+                c.drawText(line, railLeft, y, small)
+            }
             small.color = Color.rgb(180, 220, 245)
         }
+        small.textSize = 13f
+    }
+
+    /** Greedy word wrap into at most maxLines lines of maxW pixels. */
+    private fun wrap(paint: Paint, text: String, maxW: Float, maxLines: Int): List<String> {
+        val out = mutableListOf<String>()
+        var line = ""
+        for (word in text.split(' ')) {
+            val candidate = if (line.isEmpty()) word else "$line $word"
+            if (paint.measureText(candidate) <= maxW || line.isEmpty()) {
+                line = candidate
+            } else {
+                out += line
+                line = word
+                if (out.size == maxLines - 1) break
+            }
+        }
+        if (line.isNotEmpty() && out.size < maxLines) out += line
+        return out
     }
 
     private fun drawEngage(c: Canvas, w: Int, h: Int, t: Float) {

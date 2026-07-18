@@ -66,10 +66,11 @@ class MapRenderer {
     fun draw(c: Canvas, w: Int, h: Int, g: GameEngine, t: Float) {
         val me = g.player ?: return
         val heading = g.heading
-        // Everyday's widget size: a 210 px disc, centered like the original.
+        // Everyday's widget: a 210 px disc, parked in the upper right corner
+        // (Mars's layout); the HUD text stacks tightly along its left.
         val radius = min(210f * (h / 480f), w - 10f) / 2f
-        val cx = w / 2f
-        val cy = h * 0.47f
+        val cx = w - radius - 6f
+        val cy = radius + 10f
         lastCx = cx; lastCy = cy; lastRadius = radius
         val scale = radius / g.zoomRadius
         mPerLon = 111320.0 * cos(Math.toRadians(me.lat))
