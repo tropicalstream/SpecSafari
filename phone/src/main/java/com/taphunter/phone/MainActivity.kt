@@ -318,12 +318,20 @@ class MainActivity : Activity() {
                         com.taphunter.shared.EthoModel.approachTip(eth),
                     12.5f, Color.rgb(150, 190, 245)).apply { setPadding(0, dp(6), 0, 0) })
 
-                // Recorded field history — your relationship, from the database.
-                val flPets = d?.optJSONArray("flPets")?.optInt(i) ?: 0
-                val flTreats = d?.optJSONArray("flTreats")?.optInt(i) ?: 0
-                val flBerries = d?.optJSONArray("flBerries")?.optInt(i) ?: 0
-                val flStartles = d?.optJSONArray("flStartles")?.optInt(i) ?: 0
-                val flClosest = d?.optJSONArray("flClosest")?.optInt(i) ?: 9999
+                // Recorded field history — the phone's local log is authoritative
+                // (works offline); fall back to the glasses sync when it's blank.
+                val local = getSharedPreferences("den", Context.MODE_PRIVATE)
+                    .getString("fl_$i", null)?.split(',')?.mapNotNull { it.toLongOrNull() }
+                fun fh(idx: Int, key: String): Int {
+                    val lv = local?.getOrNull(idx)?.toInt()
+                    if (lv != null && (idx != 5 || lv < 9999)) return lv
+                    return d?.optJSONArray(key)?.optInt(i) ?: if (idx == 5) 9999 else 0
+                }
+                val flPets = fh(0, "flPets")
+                val flTreats = fh(1, "flTreats")
+                val flBerries = fh(2, "flBerries")
+                val flStartles = fh(3, "flStartles")
+                val flClosest = fh(5, "flClosest")
                 val hasHistory = flPets + flTreats + flBerries + flStartles > 0 || flClosest < 9999
                 if (hasHistory) {
                     val closeStr = if (flClosest in 1..9998) " · closest ${"%.1f".format(flClosest / 100f)} m" else ""

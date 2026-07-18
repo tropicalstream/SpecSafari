@@ -119,6 +119,7 @@ class DenActivity : Activity() {
     /** Log every resident present in the world once per visit, by habitat. */
     private fun recordVisit() {
         if (recordedThisVisit) return
+        if (renderer.creatures.isEmpty()) return   // wait for the world to populate
         recordedThisVisit = true
         val seen = HashSet<Int>()
         for (c in renderer.creatures) if (seen.add(c.species)) {
