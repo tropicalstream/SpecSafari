@@ -1,4 +1,4 @@
-# TapHunter 🐾🗺️
+# SpecSafari 🐾🗺️
 
 A creature-hunting walking game for the **RayNeo X3 Pro** smart glasses.
 Your real neighborhood is the realm: real streets, real parks, real
@@ -71,11 +71,11 @@ walking game, not a phone game.
 The X3's own location stack is empty — the OS exposes only a `passive`
 provider and a `fused` stub that never produces a fix (verified with
 `dumpsys location`; the Everyday project reached the same conclusion and
-solved it with its phone companion). So TapHunter ships in two parts:
+solved it with its phone companion). So SpecSafari ships in two parts:
 
-- **TapHunter** (glasses) — the game.
-- **TapHunter Beam** (phone) — a tiny companion that streams the phone's
-  GPS to the glasses over Bluetooth RFCOMM, on TapHunter's own service
+- **SpecSafari** (glasses) — the game.
+- **SpecSafari Beam** (phone) — a tiny companion that streams the phone's
+  GPS to the glasses over Bluetooth RFCOMM, on SpecSafari's own service
   UUID so it coexists with Everyday's channel. Pair phone ↔ glasses in
   Bluetooth settings (already done if you use Everyday), open the Beam
   app, tap **START BEAM**, and hunt. The glasses also listen to every
@@ -85,15 +85,15 @@ solved it with its phone companion). So TapHunter ships in two parts:
 ## Build & install
 
 ```bash
-cd ~/Projects/TapHunter
+cd ~/Projects/SpecSafari
 ./gradlew :app:assembleDebug :phone:assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk        # glasses
-adb shell pm grant com.taphunter android.permission.ACCESS_FINE_LOCATION
-adb shell pm grant com.taphunter android.permission.BLUETOOTH_CONNECT
+adb shell pm grant com.specsafari android.permission.ACCESS_FINE_LOCATION
+adb shell pm grant com.specsafari android.permission.BLUETOOTH_CONNECT
 # sideload phone/build/outputs/apk/debug/phone-debug.apk on the phone
 ```
 
-Prebuilt: `TapHunter.apk` (glasses) and `TapHunterBeam.apk` (phone) at
+Prebuilt: `SpecSafari.apk` (glasses) and `SpecSafariBeam.apk` (phone) at
 the repo root.
 
 JDK 17, Kotlin, zero dependencies, no binary assets — sprites are Canvas
@@ -105,7 +105,7 @@ once keeps working offline.
 ### Desk demo (no walking)
 
 ```bash
-adb shell am start -n com.taphunter/.MainActivity --ez demo true \
+adb shell am start -n com.specsafari/.MainActivity --ez demo true \
   [--ef lat 37.7694 --ef lon -122.4862]
 ```
 
@@ -122,6 +122,6 @@ real game (GPS, real timing duel) is unaffected.
   topology (phone serves, glasses connect to a bonded device's service
   UUID) come from Théophile Gaudin's excellent open
   [Everyday](https://github.com/TheophileGaudin/Everyday) HUD project,
-  adopted here with the author's permission. TapHunter's implementation
+  adopted here with the author's permission. SpecSafari's implementation
   is fresh, dependency-free code in this suite's house style, on its own
   service UUID.

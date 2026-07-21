@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.taphunter.shared"
+    namespace = "com.specsafari.shared"
     compileSdk = 35
 
     defaultConfig {
@@ -18,7 +18,12 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
 }

@@ -1,0 +1,346 @@
+package com.specsafari.render
+
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PointF
+import android.graphics.RectF
+import android.graphics.Typeface
+import com.specsafari.engine.GameEngine
+import com.specsafari.engine.Spawn
+import com.specsafari.shared.Species
+import com.specsafari.shared.Sprites
+import com.specsafari.geo.GeoMath
+import com.specsafari.geo.GeoPoint
+import com.specsafari.geo.RpgNamer
+import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.min
+import kotlin.math.sin
+import kotlin.math.sqrt
+
+/**
+ * The realm map: heading-up, circular, the same size and place as the
+ * Everyday minimap it grew from (210 px disc, centered) — the 3D creature
+ * apparitions get the drama instead. Every real road and path is drawn;
+ * names arrive RPGified. Palette is tuned for full sun: white-hot cores
+ * over saturated halos.
+ */
+class MapRenderer {
+
+    /** Disc geometry of the last frame, shared with the HUD and GL layers. */
+    var lastCx = 0f; private set
+    var lastCy = 0f; private set
+    var lastRadius = 0f; private set
+
+    private val roadPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(210, 240, 255); style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND
+    }
+    private val majorPaint = Paint(roadPaint).apply { color = Color.rgb(255, 205, 90) }
+    private val pathPaint = Paint(roadPaint).apply { color = Color.rgb(150, 255, 130) }
+    private val haloPaint = Paint(roadPaint).apply { color = Color.argb(70, 120, 210, 255) }
+    private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(90, 255, 255, 255); style = Paint.Style.STROKE; strokeWidth = 2f
+    }
+    private val rimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(90, 220, 255); style = Paint.Style.STROKE; strokeWidth = 3f
+    }
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val strokeP = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
+    private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(255, 250, 200); textSize = 13f; typeface = Typeface.DEFAULT_BOLD
+    }
+    private val roadLabel = Paint(label).apply { color = Color.rgb(200, 235, 255); textSize = 12f }
+    private val northPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(255, 110, 100); textSize = 15f; typeface = Typeface.DEFAULT_BOLD
+        textAlign = Paint.Align.CENTER
+    }
+    private val clip = Path()
+    private val work = Path()
+    private val occupied = mutableListOf<RectF>()
+
+    /** Label stickiness: recently shown names keep winning their spot, so
+     * heading wobble cannot make the map's words blink on and off. */
+    private val stick = HashMap<Long, Long>()
+    private fun sticky(id: Long, now: Long) = (stick[id] ?: 0L) > now
+    private fun hold(id: Long, now: Long) { stick[id] = now + 2600L }
+
+    private var mPerLon = 111320.0
+
+    fun draw(c: Canvas, w: Int, h: Int, g: GameEngine, t: Float) {
+        val me = g.player ?: return
+        val heading = g.heading
+        // Everyday's widget: a 210 px disc, parked in the upper right corner
+        // (Mars's layout); the HUD text stacks tightly along its left.
+        val radius = min(210f * (h / 480f), w - 10f) / 2f
+        val cx = w - radius - 6f
+        val cy = radius + 10f
+        lastCx = cx; lastCy = cy; lastRadius = radius
+        val scale = radius / g.zoomRadius
+        mPerLon = 111320.0 * cos(Math.toRadians(me.lat))
+        val hRad = Math.toRadians(heading.toDouble())
+        val cosH = cos(hRad).toFloat(); val sinH = sin(hRad).toFloat()
+
+        fun project(p: GeoPoint, out: PointF): Boolean {
+            val e = ((p.lon - me.lon) * mPerLon).toFloat()
+            val n = ((p.lat - me.lat) * 111320.0).toFloat()
+            val sx = e * cosH - n * sinH
+            val sy = -(e * sinH + n * cosH)
+            out.set(cx + sx * scale, cy + sy * scale)
+            return abs(sx) * scale < radius * 1.35f && abs(sy) * scale < radius * 1.35f
+        }
+
+        val now = System.currentTimeMillis()
+        clip.reset(); clip.addCircle(cx, cy, radius, Path.Direction.CW)
+        c.save(); c.clipPath(clip)
+
+        // Faint range ring at half zoom for scale feel.
+        c.drawCircle(cx, cy, radius * 0.5f, ringPaint)
+
+        // Roads and paths — every one the data has.
+        val pt = PointF()
+        occupied.clear()
+        // Creatures and chests own their pixels: labels route around them.
+        for (s in g.interest()) {
+            if (project(s.p, pt)) {
+                occupied += RectF(pt.x - 26f, pt.y - 30f, pt.x + 46f, pt.y + 26f)
+            }
+        }
+        // name, x, y, distance-from-wearer — the street underfoot labels first.
+        val labelWanted = mutableListOf<Pair<Triple<String, Float, Float>, Float>>()
+        for (road in g.roads) {
+            work.reset()
+            var started = false
+            var anyIn = false
+            var midX = 0f; var midY = 0f; var midN = 0
+            for (p in road.pts) {
+                val inside = project(p, pt)
+                if (!started) { work.moveTo(pt.x, pt.y); started = true }
+                else work.lineTo(pt.x, pt.y)
+                if (inside) {
+                    anyIn = true
+                    val dx = pt.x - cx; val dy = pt.y - cy
+                    if (dx * dx + dy * dy < radius * radius * 0.72f) {
+                        midX += pt.x; midY += pt.y; midN++
+                    }
+                }
+            }
+            if (!started || !anyIn) continue
+            val paint = when {
+                road.isMajor -> majorPaint
+                road.isPath -> pathPaint
+                else -> roadPaint
+            }
+            haloPaint.strokeWidth = if (road.isMajor) 9f else 6f
+            c.drawPath(work, haloPaint)
+            paint.strokeWidth = if (road.isMajor) 4f else if (road.isPath) 2.4f else 3f
+            c.drawPath(work, paint)
+            if (midN > 0 && (road.name != null || road.isPath)) {
+                RpgNamer.road(road.name, road.kind, road.id)?.let { fancy ->
+                    val lx = midX / midN; val ly = midY / midN
+                    val dx = lx - cx; val dy = ly - cy
+                    // Named streets outrank unnamed path filler; a label that
+                    // was just visible outranks a newcomer (no blinking).
+                    var rank = sqrt(dx * dx + dy * dy) + if (road.name == null) 90f else 0f
+                    if (sticky(fancy.hashCode().toLong(), now)) rank -= 170f
+                    labelWanted += Triple(fancy, lx, ly) to rank
+                }
+            }
+        }
+
+        // Havens: places freed creatures made greener. A soft vitality glow
+        // plus little trees and berries, thickening as the place flourishes —
+        // the visible reward for setting friendly creatures loose here.
+        for (h in g.eco.havens) {
+            if (!project(h.p, pt)) continue
+            val hr = (g.eco.havenRadius(h) * scale).coerceIn(12f, radius)
+            fill.color = Color.argb((34 + (h.vitality * 7f).toInt()).coerceAtMost(90), 96, 224, 128)
+            c.drawCircle(pt.x, pt.y, hr, fill)
+            val n = (2f + h.vitality).toInt().coerceIn(2, 12)
+            val rnd = java.util.Random((h.lat * 1e5).toLong() * 31 + (h.lon * 1e5).toLong())
+            for (i in 0 until n) {
+                val a = rnd.nextFloat() * 6.2832f
+                val rr = (0.2f + rnd.nextFloat() * 0.75f) * hr
+                val tx = pt.x + cos(a) * rr; val ty = pt.y + sin(a) * rr
+                // a tiny tree: brown trunk + green canopy triangle
+                strokeP.color = Color.rgb(120, 82, 48); strokeP.strokeWidth = 2f
+                c.drawLine(tx, ty, tx, ty - 5f, strokeP)
+                fill.color = Color.rgb(70, 200, 110)
+                work.reset(); work.moveTo(tx, ty - 12f)
+                work.lineTo(tx - 4f, ty - 4f); work.lineTo(tx + 4f, ty - 4f); work.close()
+                c.drawPath(work, fill)
+                if (rnd.nextFloat() < 0.4f) {
+                    fill.color = Color.rgb(255, 120, 170)
+                    c.drawCircle(tx + 5f, ty - 2f, 1.8f, fill)
+                }
+            }
+        }
+
+        // POI markers + RPG names, nearest first (sticky first), deconflicted.
+        val poiLabels = g.pois
+            .map { it to (GeoMath.distanceM(me, it.p) - if (sticky(it.id, now)) 70f else 0f) }
+            .filter { it.second < g.zoomRadius * 1.15f }
+            .sortedBy { it.second }
+            .take(9)
+        for ((poi, _) in poiLabels) {
+            if (!project(poi.p, pt)) continue
+            fill.color = Color.rgb(255, 220, 90)
+            c.drawCircle(pt.x, pt.y, 4f, fill)
+            fill.color = Color.rgb(255, 250, 230)
+            c.drawCircle(pt.x, pt.y, 1.8f, fill)
+            if (place(c, RpgNamer.poi(poi.name, poi.category, poi.id), pt.x, pt.y, label)) {
+                hold(poi.id, now)
+            }
+        }
+        var shown = 0
+        for ((entry, rank) in labelWanted.sortedBy { it.second }) {
+            if (shown >= 5) break
+            val (name, lx, ly) = entry
+            if (place(c, name, lx, ly, roadLabel)) {
+                shown++
+                hold(name.hashCode().toLong(), now)   // name is seeded = stable key
+            }
+        }
+        if (stick.size > 160) stick.entries.removeAll { it.value < now }
+
+        // Capture ring: creatures engage only at arm's length (3 m).
+        strokeP.color = Color.argb(110, 120, 255, 200); strokeP.strokeWidth = 2.5f
+        c.drawCircle(cx, cy, (GameEngine.CAPTURE_RANGE_M * scale).coerceAtLeast(7f), strokeP)
+
+        // Sonar ping sweep.
+        if (g.pingT > 0f) {
+            val pr = (1.2f - g.pingT) / 1.2f * radius
+            strokeP.color = Color.argb((160 * g.pingT / 1.2f).toInt(), 140, 255, 230)
+            strokeP.strokeWidth = 4f
+            c.drawCircle(cx, cy, pr, strokeP)
+        }
+
+        // Creatures and treasure. A creature inside apparition range hands
+        // its body to the GL hologram layer; the map keeps ring and badge.
+        val target = g.target()
+        for (s in g.interest()) {
+            val onMap = project(s.p, pt)
+            val dx = pt.x - cx; val dy = pt.y - cy
+            val inDisc = sqrt(dx * dx + dy * dy) <= radius - 14f
+            if (onMap && inDisc) {
+                val dM = GeoMath.distanceM(me, s.p)
+                drawSpawn(c, s, pt.x, pt.y, t, s === target,
+                    ghost = s.isCreature && dM <= g.appearRange())
+            }
+        }
+        c.restore()
+
+        // Rim, north, offscreen target arrow with distance.
+        c.drawCircle(cx, cy, radius, rimPaint)
+        drawNorth(c, cx, cy, radius, heading)
+        target?.let { tg ->
+            project(tg.p, pt)
+            val dx = pt.x - cx; val dy = pt.y - cy
+            if (sqrt(dx * dx + dy * dy) > radius - 14f) {
+                drawEdgeArrow(c, cx, cy, radius, dx, dy, tg, me, t)
+            }
+        }
+
+        // The wearer: a bright arrow, always screen-up (heading-up map).
+        work.reset()
+        work.moveTo(cx, cy - 12f); work.lineTo(cx - 8f, cy + 9f)
+        work.lineTo(cx, cy + 4f); work.lineTo(cx + 8f, cy + 9f)
+        work.close()
+        fill.color = Color.rgb(255, 255, 255)
+        c.drawPath(work, fill)
+        strokeP.color = Color.rgb(90, 220, 255); strokeP.strokeWidth = 2f
+        c.drawPath(work, strokeP)
+    }
+
+    private fun drawSpawn(
+        c: Canvas, s: Spawn, x: Float, y: Float, t: Float, isTarget: Boolean,
+        ghost: Boolean = false
+    ) {
+        val pulse = 1f + sin(t * 4f) * 0.15f
+        if (s.lost) {
+            // A lost friend wears a soft heart-pink halo — no level badge, no
+            // duel; find it and it comes home.
+            fill.color = Color.rgb(255, 120, 190); fill.alpha = 90
+            c.drawCircle(x, y, 18f * pulse, fill)
+            fill.alpha = 255
+            strokeP.color = Color.argb(200, 255, 170, 215); strokeP.strokeWidth = 2f
+            c.drawCircle(x, y, 22f * pulse, strokeP)
+            if (!ghost) Sprites.creature(c, s.species, x, y, 8f, t, excited = false)
+            if (isTarget) {
+                strokeP.color = Color.rgb(255, 255, 255); strokeP.strokeWidth = 2.5f
+                c.drawCircle(x, y, 26f * pulse, strokeP)
+            }
+            return
+        }
+        if (s.isCreature) {
+            val sp = Species.ALL[s.species]
+            fill.color = sp.main; fill.alpha = 100
+            c.drawCircle(x, y, 16f * pulse, fill)
+            fill.alpha = 255
+            if (!ghost) Sprites.creature(c, s.species, x, y, 8f, t, excited = false)
+            fill.color = Color.rgb(20, 40, 70)
+            val badge = RectF(x + 10f, y - 22f, x + 38f, y - 7f)
+            c.drawRoundRect(badge, 4f, 4f, fill)
+            label.color = Color.rgb(160, 255, 200)
+            c.drawText("L${s.level}", badge.left + 5f, badge.bottom - 4f, label)
+            label.color = Color.rgb(255, 250, 200)
+        } else {
+            Sprites.chest(c, x, y, 8f * pulse, 0f)
+        }
+        if (isTarget) {
+            strokeP.color = Color.rgb(255, 255, 255); strokeP.strokeWidth = 2.5f
+            c.drawCircle(x, y, 21f * pulse, strokeP)
+        }
+    }
+
+    private fun drawEdgeArrow(
+        c: Canvas, cx: Float, cy: Float, radius: Float,
+        dx: Float, dy: Float, tg: Spawn, me: GeoPoint, t: Float
+    ) {
+        val a = atan2(dy, dx)
+        val ax = cx + cos(a) * (radius - 6f)
+        val ay = cy + sin(a) * (radius - 6f)
+        val color = if (tg.isCreature) Species.ALL[tg.species].main else Color.rgb(255, 210, 40)
+        val pulse = 1f + sin(t * 5f) * 0.2f
+        work.reset()
+        work.moveTo(ax + cos(a) * 13f * pulse, ay + sin(a) * 13f * pulse)
+        work.lineTo(ax + cos(a + 2.6f) * 11f, ay + sin(a + 2.6f) * 11f)
+        work.lineTo(ax + cos(a - 2.6f) * 11f, ay + sin(a - 2.6f) * 11f)
+        work.close()
+        fill.color = color
+        c.drawPath(work, fill)
+        val d = GeoMath.distanceM(me, tg.p)
+        label.textAlign = Paint.Align.CENTER
+        val tx = cx + cos(a) * (radius - 34f)
+        val ty = cy + sin(a) * (radius - 34f) + 5f
+        label.color = Color.WHITE
+        c.drawText(GeoMath.prettyDistance(d), tx, ty, label)
+        label.textAlign = Paint.Align.LEFT
+        label.color = Color.rgb(255, 250, 200)
+    }
+
+    private fun drawNorth(c: Canvas, cx: Float, cy: Float, radius: Float, heading: Float) {
+        val rel = Math.toRadians(GeoMath.relativeDeg(0f, heading).toDouble())
+        val x = cx + sin(rel).toFloat() * (radius - 13f)
+        val y = cy - cos(rel).toFloat() * (radius - 13f)
+        c.drawText("N", x, y + 5f, northPaint)
+    }
+
+    /** Label with simple de-confliction; returns whether it was drawn. */
+    private fun place(c: Canvas, text: String, x: Float, y: Float, paint: Paint): Boolean {
+        val tw = paint.measureText(text)
+        val rect = RectF(x + 6f, y - 13f, x + 6f + tw + 4f, y + 2f)
+        if (occupied.any { RectF.intersects(it, rect) }) {
+            val below = RectF(x - tw / 2f, y + 4f, x + tw / 2f + 4f, y + 19f)
+            if (occupied.any { RectF.intersects(it, below) }) return false
+            occupied += below
+            c.drawText(text, below.left + 2f, below.bottom - 4f, paint)
+            return true
+        }
+        occupied += rect
+        c.drawText(text, rect.left + 2f, rect.bottom - 4f, paint)
+        return true
+    }
+}

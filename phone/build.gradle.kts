@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.taphunter.phone"
+    namespace = "com.specsafari.phone"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.taphunter.phone"
+        applicationId = "com.specsafari.phone"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

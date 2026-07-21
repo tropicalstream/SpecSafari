@@ -3,12 +3,12 @@
 
     <!-- The hunt is real: GPS places the creatures, Overpass draws the
          realm. If the on-glasses permission dialog is awkward, pre-grant:
-         adb shell pm grant com.taphunter android.permission.ACCESS_FINE_LOCATION -->
+         adb shell pm grant com.specsafari android.permission.ACCESS_FINE_LOCATION -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- The real location source: the TapHunter Beam phone app over RFCOMM. -->
+    <!-- The real location source: the SpecSafari Beam phone app over RFCOMM. -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH"
         android:maxSdkVersion="30" />
@@ -20,7 +20,7 @@
         android:roundIcon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:hardwareAccelerated="true"
-        android:theme="@style/Theme.TapHunter">
+        android:theme="@style/Theme.SpecSafari">
 
         <meta-data
             android:name="com.rayneo.mercury.app"

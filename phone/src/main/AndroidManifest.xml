@@ -19,7 +19,7 @@
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
-        android:label="TapHunter Hub">
+        android:label="SpecSafari Hub">
 
         <activity
             android:name=".MainActivity"

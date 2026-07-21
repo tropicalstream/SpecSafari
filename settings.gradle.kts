@@ -12,7 +12,7 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "TapHunter"
+rootProject.name = "SpecSafari"
 include(":app")
 include(":phone")
 include(":shared")
