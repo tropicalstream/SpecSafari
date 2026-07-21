@@ -354,7 +354,9 @@ class GameEngine(
                             // The desk demo tours everything: plant a cache close
                             // enough to reach in a few strides.
                             spawner.treasures += Spawn(
-                                GeoMath.destination(p, 135f, 12f),
+                                // Far enough that the 15 m chest range cannot
+                                // swallow every tap near the demo's start.
+                                GeoMath.destination(p, 135f, 45f),
                                 false, 0, 1, "A WAYSIDE CACHE", 0L
                             )
                             // ...and a lost friend a few strides the other way,
