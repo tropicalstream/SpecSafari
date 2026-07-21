@@ -95,7 +95,7 @@ adb shell pm grant com.specsafari android.permission.BLUETOOTH_CONNECT
 # sideload phone/build/outputs/apk/debug/phone-debug.apk on the phone
 ```
 
-Prebuilt: `SpecSafari.apk` (glasses) and `SpecSafariBeam.apk` (phone) at
+Prebuilt: `SpecSafari-X3.apk` (glasses) and `SpecSafari-Beam.apk` (phone) at
 the repo root.
 
 JDK 17, Kotlin, zero dependencies, no binary assets — sprites are Canvas

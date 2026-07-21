@@ -626,7 +626,7 @@ class MainActivity : Activity() {
     }
 
     private fun copyButton(code: String): Button = Button(this).apply {
-        text = "COPY JOURNEY CODE"
+        text = "COPY JOURNEY"
         textSize = 13f
         typeface = Typeface.DEFAULT_BOLD
         setTextColor(gold)
@@ -635,8 +635,12 @@ class MainActivity : Activity() {
         }
         setOnClickListener {
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(ClipData.newPlainText("SpecSafari Journey", code))
-            Toast.makeText(this@MainActivity, "Journey code copied.", Toast.LENGTH_SHORT).show()
+            // Copy the readable field note plus the shareable code, so a paste
+            // reads as a journal entry AND still carries the importable SSJ1.
+            val summary = JourneyCodec.decode(code)?.summary()
+            val payload = if (summary != null) "$summary\n\n$code" else code
+            clipboard.setPrimaryClip(ClipData.newPlainText("SpecSafari Journey", payload))
+            Toast.makeText(this@MainActivity, "Journey copied.", Toast.LENGTH_SHORT).show()
         }
     }
 
