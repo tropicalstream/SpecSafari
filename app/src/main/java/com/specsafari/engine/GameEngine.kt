@@ -8,7 +8,11 @@ import com.specsafari.geo.OsmPoi
 import com.specsafari.geo.OsmRepository
 import com.specsafari.geo.OsmRoad
 import com.specsafari.shared.Species
+import com.specsafari.shared.JourneyCodec
+import com.specsafari.shared.JourneyRecord
 import org.json.JSONArray
+import org.json.JSONObject
+import java.time.LocalDate
 import kotlin.math.abs
 import kotlin.random.Random
 
@@ -191,6 +195,7 @@ class GameEngine(
     fun settingsRow(i: Int) = settingsRows[i]
 
     fun boot() {
+        ensureJourneyToday()
         if (booted) {
             // A long pause outdoors = a fresh hunt (the ladder restarts at 50 m).
             if (pausedAtMs > 0 && System.currentTimeMillis() - pausedAtMs > 30 * 60_000L &&
@@ -217,14 +222,66 @@ class GameEngine(
 
     var sessionWalkedM = 0f; private set
     private var flushedWalkedM = 0f
+    private var journeySourceM = 0f
+
+    private fun ensureJourneyToday() {
+        val today = LocalDate.now().toString()
+        if (store.journeyDay != today) store.resetJourney(today)
+    }
+
+    private fun journeyIds(csv: String): MutableList<Int> = csv.split(',')
+        .mapNotNull { it.toIntOrNull() }.filter { it in Species.ALL.indices }.toMutableList()
+
+    private fun recordFound(species: Int) {
+        ensureJourneyToday()
+        val ids = journeyIds(store.journeyFoundCsv).apply { add(species) }
+        store.journeyFoundCsv = ids.takeLast(64).joinToString(",")
+    }
+
+    private fun recordReleased(species: Int) {
+        ensureJourneyToday()
+        val ids = journeyIds(store.journeyReleasedCsv).apply { add(species) }
+        store.journeyReleasedCsv = ids.takeLast(64).joinToString(",")
+    }
+
+    private fun recordTreasure(essence: Int) {
+        ensureJourneyToday()
+        store.journeyTreasures++
+        store.journeyEssence += essence.coerceAtLeast(0)
+    }
+
+    fun onJourneyRegion(region: String) {
+        ensureJourneyToday()
+        if (region.isNotBlank()) store.journeyRegion = region
+    }
+
+    fun journeyRecord(): JourneyRecord {
+        ensureJourneyToday()
+        return JourneyRecord(
+            day = store.journeyDay,
+            distanceM = store.journeyDistanceM.toInt(),
+            treasures = store.journeyTreasures,
+            essence = store.journeyEssence,
+            berries = store.journeyBerries,
+            foundSpecies = journeyIds(store.journeyFoundCsv),
+            releasedSpecies = journeyIds(store.journeyReleasedCsv),
+            region = store.journeyRegion,
+        )
+    }
 
     fun onLocation(p: GeoPoint, accuracy: Float, travel: Float?, walkedM: Float) {
         player = p
         gpsAccuracy = accuracy
         travelBearing = travel
         sessionWalkedM = walkedM
+        ensureJourneyToday()
+        if (walkedM < journeySourceM) journeySourceM = walkedM
+        val journeyDelta = (walkedM - journeySourceM).coerceIn(0f, 200f)
+        if (!demo && journeyDelta > 0f) store.journeyDistanceM += journeyDelta
+        journeySourceM = walkedM
         // Bank lifetime distance in 25 m slices so a crash loses little —
         // but NEVER from a desk demo: the odometer is real steps only.
+        if (walkedM < flushedWalkedM) flushedWalkedM = walkedM
         if (!demo && walkedM - flushedWalkedM >= 25f) {
             store.lifetimeDistanceM = store.lifetimeDistanceM + (walkedM - flushedWalkedM)
             flushedWalkedM = walkedM
@@ -342,7 +399,9 @@ class GameEngine(
                         else 500f + Random.nextFloat() * 500f)
                     nextBerryAtM = sessionWalkedM + gap / (1f + vit * 0.35f)
                     val bonus = if (vit > 1.5f && Random.nextFloat() < 0.4f) 1 else 0
-                    berries += 1 + bonus
+                    val foundBerries = 1 + bonus
+                    berries += foundBerries
+                    store.journeyBerries += foundBerries
                     toastText = if (bonus > 0) "THE HAVEN YIELDS TWO ${BERRY_NAMES[Random.nextInt(BERRY_NAMES.size)]}S!"
                         else "FOUND A ${BERRY_NAMES[Random.nextInt(BERRY_NAMES.size)]}!"
                     toastT = 4f
@@ -392,7 +451,7 @@ class GameEngine(
             State.ACQUIRE -> {}
             State.HUNT -> huntClick()
             State.ENGAGE -> judgePulse()
-            State.FETCH -> fetchDecision(send = true)   // tap = send the volunteer
+            State.FETCH -> host.sound(Audio.DENY, 0.8f, 0.35f) // sending is deliberately triple-tap
             State.RESCUE -> {}
             State.RESULT -> switch(State.HUNT)
             State.LOOT -> switch(State.HUNT)
@@ -418,6 +477,10 @@ class GameEngine(
             State.RESULT, State.LOOT -> switch(State.HUNT)
             else -> {}
         }
+    }
+
+    fun tripleTap() {
+        if (state == State.FETCH) fetchDecision(send = true)
     }
 
     fun onBack(): Boolean {
@@ -623,6 +686,7 @@ class GameEngine(
         resultCaught = true
         resultSpecies = c.species
         resultLevel = c.level
+        recordFound(c.species)
         reunion = true
         host.sound(Audio.CATCH)
         host.sound(Audio.LEVEL, 1.1f, 0.7f)
@@ -660,13 +724,14 @@ class GameEngine(
     /** The weakest creature in the box — the eager volunteer. */
     private fun lowestBoxCreature(): BoxEntry? = box.minByOrNull { it.level }
 
-    /** FETCH screen: tap = send the volunteer, double-tap = open it yourself. */
+    /** FETCH screen: triple-tap sends the volunteer; double-tap opens it yourself. */
     private fun fetchDecision(send: Boolean) {
         val chest = fetchChest ?: return
         if (!send) { fetchChest = null; openChest(chest); return }
         // The volunteer sets off. Bond raises the odds it comes home with more.
         val idx = box.indexOfFirst { it.species == fetchSpecies && it.level == fetchLevel }
         if (idx >= 0) { box.removeAt(idx); store.boxJson = dumpBox(box) }
+        recordReleased(fetchSpecies)
         fetchStage = 1
         fetchWasQuest = true
         fetchT = 0f
@@ -689,6 +754,7 @@ class GameEngine(
             lootEssence = (base * (1f + 0.2f * tier(UPG_SATCHEL))).toInt()
             store.essence = store.essence + lootEssence
         } else lootEssence = 0
+        recordTreasure(lootEssence)
         if (fetchReturned) {
             box.add(BoxEntry(fetchSpecies, fetchLevel, System.currentTimeMillis() / 1000))
             store.boxJson = dumpBox(box)
@@ -757,6 +823,7 @@ class GameEngine(
             store.boxJson = dumpBox(box)
             rememberPoi(c.poiId)
             store.lifetimeCaught = store.lifetimeCaught + 1
+            recordFound(c.species)
             val gained = ((2 + c.level) * (1f + 0.2f * tier(UPG_SATCHEL))).toInt()
             store.essence = store.essence + gained
             if (isLadder) {
@@ -788,6 +855,7 @@ class GameEngine(
         lootPlace = chest.placeName
         fetchWasQuest = false
         store.essence = store.essence + lootEssence
+        recordTreasure(lootEssence)
         targetIdx = 0
         host.sound(Audio.CHEST)
         host.sound(Audio.ESSENCE, 1f, 0.8f)
@@ -1015,6 +1083,8 @@ class GameEngine(
     // -------------------------------------------------- phone companionship
 
     /** Progress snapshot for the HunterDex on the phone. */
+    fun journeyCode(): String = JourneyCodec.encode(journeyRecord())
+
     fun dexJson(): String {
         val counts = IntArray(Species.ALL.size)
         val best = IntArray(Species.ALL.size)
@@ -1031,6 +1101,9 @@ class GameEngine(
         sb.append(",\"lifeDistM\":").append(store.lifetimeDistanceM.toInt())
         sb.append(",\"sessionM\":").append(sessionWalkedM.toInt())
         sb.append(",\"huntLevel\":").append(spawner.level)
+        val journey = journeyRecord()
+        sb.append(",\"journeySummary\":").append(JSONObject.quote(journey.summary()))
+        sb.append(",\"journeyCode\":").append(JSONObject.quote(JourneyCodec.encode(journey)))
         sb.append(",\"tiers\":[").append((0..3).joinToString(",") { tier(it).toString() }).append("]")
         sb.append(",\"counts\":[").append(counts.joinToString(",")).append("]")
         sb.append(",\"best\":[").append(best.joinToString(",")).append("]")
@@ -1086,6 +1159,7 @@ class GameEngine(
                 store.boxJson = dumpBox(box)
                 store.essence = store.essence + 3
                 addBond(s, 2)
+                recordReleased(s)
                 // It ventures to a habitat of its kind; a fond parting leaves
                 // that place kinder and greener for the creatures that remain.
                 player?.let { p ->

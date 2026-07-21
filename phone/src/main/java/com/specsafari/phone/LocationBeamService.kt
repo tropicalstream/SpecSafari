@@ -17,6 +17,7 @@ import android.location.LocationManager
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import com.specsafari.shared.JourneyCodec
 import java.io.OutputStream
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -60,6 +61,7 @@ class LocationBeamService : Service() {
     }
 
     private val alive = AtomicBoolean(false)
+    private val connectionOpen = AtomicBoolean(false)
     private var serverSocket: BluetoothServerSocket? = null
     private var client: BluetoothSocket? = null
     private var out: OutputStream? = null
@@ -98,6 +100,7 @@ class LocationBeamService : Service() {
 
     override fun onDestroy() {
         alive.set(false)
+        connectionOpen.set(false)
         running = false
         connected = false
         if (instance === this) instance = null
@@ -138,20 +141,22 @@ class LocationBeamService : Service() {
                     runCatching { serverSocket?.close() }
                     client = socket
                     out = socket.outputStream
+                    connectionOpen.set(true)
                     connected = true
                     linkStatus = "BEAMING TO GLASSES"
                     lastFix?.let { send(it) }
                     readGlasses(socket)   // spawns the DEX reader
-                    // Heartbeat keeps the link honest; a dead pipe throws here.
-                    while (alive.get() && socket.isConnected) {
-                        Thread.sleep(5000)
-                        synchronized(this) { out?.write("PING\n".toByteArray()); out?.flush() }
-                    }
+                    // The X3's restrictive RFCOMM stack can tear down an idle
+                    // channel when probed with a synthetic PING. Real GPS/DEX
+                    // traffic is the heartbeat; either I/O side marks a dead
+                    // pipe and lets this loop reconnect cleanly.
+                    while (alive.get() && connectionOpen.get()) Thread.sleep(1000)
                 } catch (t: Throwable) {
                     Log.w(TAG, "link dropped: ${t.message}")
                 } finally {
                     runCatching { client?.close() }
                     client = null; out = null
+                    connectionOpen.set(false)
                     connected = false
                     if (alive.get()) linkStatus = "RECONNECTING"
                 }
@@ -172,13 +177,20 @@ class LocationBeamService : Service() {
                         getSharedPreferences("hunterdex", Context.MODE_PRIVATE)
                             .edit().putString("dex", json)
                             .putLong("dexAt", System.currentTimeMillis()).apply()
+                    } else if (line.startsWith("JNY ")) {
+                        val code = line.removePrefix("JNY ").trim()
+                        if (JourneyCodec.decode(code) != null) {
+                            getSharedPreferences("journeys", Context.MODE_PRIVATE)
+                                .edit().putString("currentCode", code).apply()
+                        }
                     } else if (line.startsWith("EVT ")) {
                         events.add(BeamEvent(line.removePrefix("EVT ").trim(),
                             System.currentTimeMillis()))
                         while (events.size > 16) events.poll()   // never hoard
                     }
                 }
-            }
+            }.onFailure { Log.w(TAG, "glasses reader ended: ${it.message}") }
+            connectionOpen.set(false)
         }.start()
     }
 
@@ -189,6 +201,7 @@ class LocationBeamService : Service() {
         val o = out ?: return false
         Thread {
             runCatching { synchronized(this) { o.write((line + "\n").toByteArray()); o.flush() } }
+                .onFailure { connectionOpen.set(false) }
         }.start()
         return true
     }
@@ -205,7 +218,7 @@ class LocationBeamService : Service() {
             runCatching {
                 synchronized(this) { o.write(line.toByteArray()); o.flush() }
                 fixesSent++
-            }
+            }.onFailure { connectionOpen.set(false) }
         }.start()
     }
 

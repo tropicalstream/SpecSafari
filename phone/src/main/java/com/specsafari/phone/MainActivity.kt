@@ -2,6 +2,8 @@ package com.specsafari.phone
 
 import android.Manifest
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -20,6 +22,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -29,6 +32,7 @@ import android.widget.TextView
 import android.widget.Toast
 import com.specsafari.shared.EcologyModel
 import com.specsafari.shared.EthoModel
+import com.specsafari.shared.JourneyCodec
 import com.specsafari.shared.Season
 import com.specsafari.shared.SeasonalEcology
 import com.specsafari.shared.Species
@@ -56,6 +60,7 @@ class MainActivity : Activity() {
     private lateinit var content: FrameLayout
     private val tabs = mutableListOf<Pair<Button, () -> View>>()
     private var activeTab = 0
+    private var journeySubscreen = 0
     private var dex: JSONObject? = null
 
     // Beam tab widgets refreshed by the poller.
@@ -451,13 +456,62 @@ class MainActivity : Activity() {
 
     private fun journeyTab(): View {
         val d = dex
-        val c = card()
-        c.addView(text("The Journey", 19f, gold, bold = true, serif = true))
-        if (d == null) {
-            c.addView(text("The ledger is blank until the glasses report in.", 13.5f, parchment))
-            return scroll(c)
+        val nav = card()
+        nav.addView(text("The Journey", 19f, gold, bold = true, serif = true))
+        nav.addView(text(
+            "A private daily field note you can copy or exchange as an offline journey code.",
+            13f, parchment))
+        val choices = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(10), 0, 0)
         }
+        listOf("TODAY", "SHARED").forEachIndexed { index, label ->
+            choices.addView(Button(this).apply {
+                text = label
+                textSize = 13f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(if (journeySubscreen == index) bgColor else gold)
+                background = GradientDrawable().apply {
+                    setColor(if (journeySubscreen == index) gold else cardColor)
+                    cornerRadius = dp(7).toFloat()
+                    setStroke(dp(1), gold)
+                }
+                setOnClickListener {
+                    journeySubscreen = index
+                    showTab(2)
+                }
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                if (index > 0) leftMargin = dp(8)
+            })
+        }
+        nav.addView(choices)
+
+        if (journeySubscreen == 1) return sharedJourneys(nav)
+
+        val daily = card()
+        daily.addView(text("Today's Walk", 17f, gold, bold = true, serif = true))
+        val compactCode = getSharedPreferences("journeys", Context.MODE_PRIVATE)
+            .getString("currentCode", null)
+        val compactJourney = compactCode?.let(JourneyCodec::decode)
+        if (d == null && compactJourney == null) {
+            daily.addView(text("The daily note appears after the glasses report in.", 13.5f, parchment))
+            return scroll(nav, daily)
+        }
+        val summary = compactJourney?.summary()
+            ?: d?.optString("journeySummary", "No walk recorded today.")
+            ?: "No walk recorded today."
+        val code = compactCode ?: d?.optString("journeyCode").orEmpty()
+        daily.addView(text(summary, 14f, parchment))
+        if (code.isNotBlank()) {
+            daily.addView(codeBlock(code))
+            daily.addView(copyButton(code))
+        }
+
+        if (d == null) return scroll(nav, daily)
+
         val caught = d.optInt("lifeCaught")
+        val c = card()
+        c.addView(text("Lifetime Rank", 17f, gold, bold = true, serif = true))
         c.addView(text(rankFor(caught), 22f, teal, bold = true, serif = true))
         c.addView(text("Rank rises with lifetime captures.", 12f, dim))
 
@@ -488,7 +542,102 @@ class MainActivity : Activity() {
             val tier = tiers?.optInt(i) ?: 0
             u.addView(statRow(names[i], "◆".repeat(tier).padEnd(5, '·')))
         }
-        return scroll(c, s, u)
+        return scroll(nav, daily, c, s, u)
+    }
+
+    /** Importable codes are self-contained and checksum-protected, so this
+     * subscreen works offline and never needs a journey server. */
+    private fun sharedJourneys(nav: View): View {
+        val import = card()
+        import.addView(text("Import a Journey", 17f, gold, bold = true, serif = true))
+        import.addView(text(
+            "Paste a friend's SSJ1 code to view its privacy-safe field note.",
+            13f, parchment))
+        val field = EditText(this).apply {
+            hint = "SSJ1…"
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            setHintTextColor(dim)
+            setSingleLine(false)
+            minLines = 2
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            background = GradientDrawable().apply {
+                setColor(bgColor)
+                cornerRadius = dp(7).toFloat()
+                setStroke(dp(1), cardEdge)
+            }
+        }
+        import.addView(field, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(9) })
+        import.addView(Button(this).apply {
+            text = "IMPORT JOURNEY"
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(bgColor)
+            background = GradientDrawable().apply {
+                setColor(gold); cornerRadius = dp(7).toFloat()
+            }
+            setOnClickListener {
+                val normalized = field.text.toString().filterNot(Char::isWhitespace)
+                val journey = JourneyCodec.decode(normalized)
+                if (journey == null) {
+                    Toast.makeText(this@MainActivity,
+                        "That journey code is incomplete or mistyped.", Toast.LENGTH_LONG).show()
+                } else {
+                    val prefs = getSharedPreferences("journeys", Context.MODE_PRIVATE)
+                    val saved = prefs.getStringSet("imported", emptySet())?.toMutableSet()
+                        ?: mutableSetOf()
+                    saved += JourneyCodec.encode(journey)
+                    prefs.edit().putStringSet("imported", saved).apply()
+                    Toast.makeText(this@MainActivity, "Journey added.", Toast.LENGTH_SHORT).show()
+                    showTab(2)
+                }
+            }
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(9) })
+
+        val cards = mutableListOf<View>(nav, import)
+        val saved = getSharedPreferences("journeys", Context.MODE_PRIVATE)
+            .getStringSet("imported", emptySet()).orEmpty()
+            .mapNotNull { code -> JourneyCodec.decode(code)?.let { Triple(it.day, code, it) } }
+            .sortedByDescending { it.first }
+        if (saved.isEmpty()) {
+            cards += card().apply {
+                addView(text("No shared journeys yet.", 13.5f, dim))
+            }
+        } else {
+            saved.forEach { (_, code, journey) ->
+                cards += card().apply {
+                    addView(text(journey.day.ifBlank { "Shared Journey" }, 17f, teal,
+                        bold = true, serif = true))
+                    addView(text(journey.summary(), 14f, parchment))
+                    addView(codeBlock(code))
+                    addView(copyButton(code))
+                }
+            }
+        }
+        return scroll(*cards.toTypedArray())
+    }
+
+    private fun codeBlock(code: String): TextView = text(code, 11f, dim).apply {
+        setTextIsSelectable(true)
+        setPadding(0, dp(9), 0, dp(4))
+    }
+
+    private fun copyButton(code: String): Button = Button(this).apply {
+        text = "COPY JOURNEY CODE"
+        textSize = 13f
+        typeface = Typeface.DEFAULT_BOLD
+        setTextColor(gold)
+        background = GradientDrawable().apply {
+            setColor(bgColor); cornerRadius = dp(7).toFloat(); setStroke(dp(1), gold)
+        }
+        setOnClickListener {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("SpecSafari Journey", code))
+            Toast.makeText(this@MainActivity, "Journey code copied.", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun meters(m: Int): String =

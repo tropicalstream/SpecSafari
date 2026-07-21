@@ -143,16 +143,21 @@ class LocationSource(context: Context, private val onFix: (GeoPoint, Location?) 
     }
 
     /** Fixes beamed from the SpecSafari phone app — the primary real source. */
-    fun acceptExternal(lat: Double, lon: Double, acc: Float) {
+    fun acceptExternal(lat: Double, lon: Double, acc: Float, speedMps: Float = -1f) {
         if (fake) return
-        accept(GeoPoint(lat, lon), acc, null)
+        accept(GeoPoint(lat, lon), acc, null, speedMps)
         statusText = "PHONE GPS ±${acc.toInt()} M"
     }
 
     /** Session meters walked, jitter-filtered by the 8 m crumb spacing. */
     var sessionDistanceM = 0f; private set
 
-    private fun accept(pRaw: GeoPoint, acc: Float, loc: Location?) {
+    private fun accept(
+        pRaw: GeoPoint,
+        acc: Float,
+        loc: Location?,
+        reportedSpeedMps: Float = if (loc?.hasSpeed() == true) loc.speed else -1f,
+    ) {
         val nowElapsed = SystemClock.elapsedRealtime()
         // Jitter discipline: an indoor ±100 m estimate teleports every second;
         // a wearer walks at ~1.5 m/s. Fixes farther than plausible movement
@@ -176,20 +181,44 @@ class LocationSource(context: Context, private val onFix: (GeoPoint, Location?) 
         accuracyM = acc
         lastFixElapsed = nowElapsed
         if (!fake) statusText = "FIX ${loc?.provider?.uppercase() ?: "?"} ±${acc.toInt()} M"
-        // Breadcrumbs and walked meters only from trustworthy fixes: a coarse
-        // indoor guess is not a stroll.
-        if (fake || acc <= 35f) {
+        // Odometer input is deliberately independent of the smoothed map
+        // position. Counting map corrections was the source of large phantom
+        // walks. Only accurate, pedestrian-speed raw fixes can add distance.
+        if (fake) {
             val now = System.currentTimeMillis()
             val last = trail.lastOrNull()
-            if (last == null || GeoMath.distanceM(last.p, p) >= 8f) {
-                if (last != null) {
-                    val step = GeoMath.distanceM(last.p, p)
-                    if (step < 120f) sessionDistanceM += step   // teleports don't count
+            if (last != null) sessionDistanceM += GeoMath.distanceM(last.p, pRaw)
+            trail.addLast(Crumb(pRaw, now))
+        } else if (acc <= 25f) {
+            val now = System.currentTimeMillis()
+            val last = trail.lastOrNull()
+            if (last == null) {
+                trail.addLast(Crumb(pRaw, now))
+            } else {
+                val step = GeoMath.distanceM(last.p, pRaw)
+                val dt = ((now - last.at) / 1000f).coerceAtLeast(0.2f)
+                val observedSpeed = step / dt
+                val pedestrian = if (reportedSpeedMps >= 0f) {
+                    reportedSpeedMps in 0.35f..3.4f
+                } else observedSpeed in 0.35f..3.4f
+                val plausible = step <= 3.4f * dt + 5f
+                if (dt > 120f || step > 200f) {
+                    // Never bridge a long outage: the wearer may have driven
+                    // while GPS or the phone beam was unavailable.
+                    trail.clear()
+                    trail.addLast(Crumb(pRaw, now))
+                } else if (step >= 8f && pedestrian && plausible) {
+                    sessionDistanceM += step
+                    trail.addLast(Crumb(pRaw, now))
+                } else if (reportedSpeedMps > 3.4f) {
+                    // Driving/riding does not count, but move the baseline so
+                    // a later walk begins cleanly at the destination.
+                    trail.clear()
+                    trail.addLast(Crumb(pRaw, now))
                 }
-                trail.addLast(Crumb(p, now))
-                while (trail.size > 64) trail.removeFirst()
             }
         }
+        while (trail.size > 64) trail.removeFirst()
         onFix(p, loc)
     }
 

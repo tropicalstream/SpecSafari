@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.location.Geocoder
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -20,21 +21,26 @@ import com.specsafari.audio.Audio
 import com.specsafari.gl.HologramView
 import com.specsafari.engine.GameEngine
 import com.specsafari.engine.Host
+import com.specsafari.engine.State
 import com.specsafari.geo.Compass
 import com.specsafari.geo.GeoPoint
+import com.specsafari.geo.GeoMath
 import com.specsafari.geo.LocationSource
 import com.specsafari.geo.OsmRepository
 import com.specsafari.geo.PhoneLink
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.sqrt
+import java.util.Locale
+import java.util.concurrent.Executors
 
 /**
  * Input (FABLE_X3_STARTER_GUIDE Part II + suite conventions):
  *  - Right temple pad swipe -> one discrete direction classified on
  *    finger-up (one gesture = one step; the TapChess standard).
  *  - Temple click arrives as a KEY (BUTTON_A / DPAD_CENTER): select.
- *    Double-tap = back. Safe Tap defers singles so doubles can cancel.
+ *    Double-tap = back. On the treasure choice only, triple-tap sends a
+ *    creature while double-tap opens the cache yourself.
  *  - Left pad (cyttsp6) swallowed.
  *
  * Desk demo (no walking required):
@@ -62,6 +68,12 @@ class MainActivity : Activity(), Host {
     private var lastTapUpAt = 0L
     private var lastTapGuard = 0L
     private var pendingClick: Runnable? = null
+    private var fetchTapCount = 0
+    private var fetchLastTapAt = 0L
+
+    private val geocodeWorker = Executors.newSingleThreadExecutor()
+    private var lastRegionPoint: GeoPoint? = null
+    private var lastRegionAt = 0L
 
     private var touchActive = false
     private var touchStartT = 0L
@@ -81,12 +93,20 @@ class MainActivity : Activity(), Host {
         location = LocationSource(this) { p, _ ->
             engine.onLocation(p, locationAccuracy(), locationTravel(), location.sessionDistanceM)
             compass.updateDeclination(p)
+            maybeResolveJourneyRegion(p)
         }
         compass = Compass(this) { deg -> engine.onHeading(deg) }
         phoneLink = PhoneLink(
             this,
-            onFix = { lat, lon, acc -> runOnUiThread { location.acceptExternal(lat, lon, acc) } },
-            onSetting = { k, v -> runOnUiThread { engine.applyRemoteSetting(k, v) } }
+            onFix = { lat, lon, acc, speed ->
+                runOnUiThread { location.acceptExternal(lat, lon, acc, speed) }
+            },
+            onSetting = { k, v -> runOnUiThread { engine.applyRemoteSetting(k, v) } },
+            onConnected = {
+                // Do not wait on the rendering looper: the X3 may expose only
+                // a brief bidirectional RFCOMM window.
+                phoneLink.send("JNY " + engine.journeyCode())
+            },
         )
         engine.demoDriver = { p -> location.setFake(p) }
         handler.post(object : Runnable {
@@ -97,11 +117,25 @@ class MainActivity : Activity(), Host {
                 handler.postDelayed(this, 2000)
             }
         })
-        // The HunterDex on the phone stays current over the same link.
+        // The HunterDex on the phone stays current over the same link. Poll
+        // connection state every second so a newly opened X3 RFCOMM window
+        // gets its snapshot immediately; steady links still send only every
+        // 15 seconds.
         handler.post(object : Runnable {
+            private var lastSentAt = 0L
             override fun run() {
-                if (phoneLink.connected) phoneLink.send("DEX " + engine.dexJson())
-                handler.postDelayed(this, 15000)
+                val now = SystemClock.uptimeMillis()
+                if (!phoneLink.connected) lastSentAt = 0L
+                else if (lastSentAt == 0L || now - lastSentAt >= 15_000L) {
+                    // Compact Journey first: it fits through even the X3's
+                    // shortest-lived RFCOMM window; the larger Dex follows.
+                    phoneLink.send("JNY " + engine.journeyCode())
+                    handler.postDelayed({
+                        if (phoneLink.connected) phoneLink.send("DEX " + engine.dexJson())
+                    }, 250)
+                    lastSentAt = now
+                }
+                handler.postDelayed(this, 1000)
             }
         })
         gameView = GameView(this, engine, renderer)
@@ -203,6 +237,10 @@ class MainActivity : Activity(), Host {
     private fun handleClick(now: Long) {
         if (now - lastTapGuard < 35) return
         lastTapGuard = now
+        if (engine.state == State.FETCH) {
+            handleFetchClick(now)
+            return
+        }
         val gap = now - lastTapUpAt
         if (gap in 40..320) {
             pendingClick?.let { handler.removeCallbacks(it) }
@@ -217,6 +255,55 @@ class MainActivity : Activity(), Host {
             pendingClick = r
             handler.postDelayed(r, 300)
         } else engine.click()
+    }
+
+    /** The treasure volunteer is consequential: one tap merely acknowledges,
+     * double-tap opens the cache yourself, and only a deliberate triple sends
+     * (and temporarily releases) the creature. */
+    private fun handleFetchClick(now: Long) {
+        val gap = now - fetchLastTapAt
+        if (fetchTapCount > 0 && gap !in 40..320) fetchTapCount = 0
+        fetchLastTapAt = now
+        fetchTapCount++
+        pendingClick?.let { handler.removeCallbacks(it) }
+        pendingClick = null
+        if (fetchTapCount >= 3) {
+            fetchTapCount = 0
+            engine.tripleTap()
+            return
+        }
+        val r = Runnable {
+            val count = fetchTapCount
+            fetchTapCount = 0
+            pendingClick = null
+            if (count == 2) engine.doubleTap() else engine.click()
+        }
+        pendingClick = r
+        handler.postDelayed(r, 330)
+    }
+
+    /** Resolve only a postal/admin-sized region for the shareable journey.
+     * Exact coordinates, addresses, and street names are never persisted. */
+    @Suppress("DEPRECATION")
+    private fun maybeResolveJourneyRegion(p: GeoPoint) {
+        val now = System.currentTimeMillis()
+        val previous = lastRegionPoint
+        if (previous != null && now - lastRegionAt < 30 * 60_000L &&
+            GeoMath.distanceM(previous, p) < 2_000f
+        ) return
+        lastRegionPoint = p
+        lastRegionAt = now
+        geocodeWorker.execute {
+            val region = runCatching {
+                val a = Geocoder(this, Locale.getDefault())
+                    .getFromLocation(p.lat, p.lon, 1)?.firstOrNull()
+                a?.postalCode?.takeIf { it.isNotBlank() }
+                    ?: a?.subAdminArea?.takeIf { it.isNotBlank() }
+                    ?: a?.adminArea?.takeIf { it.isNotBlank() }
+                    ?: a?.countryName
+            }.getOrNull()
+            if (!region.isNullOrBlank()) runOnUiThread { engine.onJourneyRegion(region) }
+        }
     }
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
@@ -289,6 +376,7 @@ class MainActivity : Activity(), Host {
 
     override fun onDestroy() {
         audio.release()
+        geocodeWorker.shutdownNow()
         super.onDestroy()
     }
 

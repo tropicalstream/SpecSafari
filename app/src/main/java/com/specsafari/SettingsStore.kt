@@ -119,6 +119,53 @@ class SettingsStore(context: Context) {
         get() = p.getString("havens", "") ?: ""
         set(v) { p.edit().putString("havens", v).apply() }
 
+    // --------------------------------------------------------- daily journey
+
+    var journeyDay: String
+        get() = p.getString("journeyDay", "") ?: ""
+        set(v) { p.edit().putString("journeyDay", v).apply() }
+
+    var journeyDistanceM: Float
+        get() = p.getFloat("journeyDistanceM", 0f)
+        set(v) { p.edit().putFloat("journeyDistanceM", v.coerceIn(0f, 200_000f)).apply() }
+
+    var journeyTreasures: Int
+        get() = p.getInt("journeyTreasures", 0)
+        set(v) { p.edit().putInt("journeyTreasures", v.coerceAtLeast(0)).apply() }
+
+    var journeyEssence: Int
+        get() = p.getInt("journeyEssence", 0)
+        set(v) { p.edit().putInt("journeyEssence", v.coerceAtLeast(0)).apply() }
+
+    var journeyBerries: Int
+        get() = p.getInt("journeyBerries", 0)
+        set(v) { p.edit().putInt("journeyBerries", v.coerceAtLeast(0)).apply() }
+
+    var journeyFoundCsv: String
+        get() = p.getString("journeyFound", "") ?: ""
+        set(v) { p.edit().putString("journeyFound", v).apply() }
+
+    var journeyReleasedCsv: String
+        get() = p.getString("journeyReleased", "") ?: ""
+        set(v) { p.edit().putString("journeyReleased", v).apply() }
+
+    var journeyRegion: String
+        get() = p.getString("journeyRegion", "") ?: ""
+        set(v) { p.edit().putString("journeyRegion", v.take(80)).apply() }
+
+    fun resetJourney(day: String) {
+        p.edit()
+            .putString("journeyDay", day)
+            .putFloat("journeyDistanceM", 0f)
+            .putInt("journeyTreasures", 0)
+            .putInt("journeyEssence", 0)
+            .putInt("journeyBerries", 0)
+            .putString("journeyFound", "")
+            .putString("journeyReleased", "")
+            .putString("journeyRegion", "")
+            .apply()
+    }
+
     /** The nuclear option, invoked from the phone hub's Reset Game. */
     fun wipe() { p.edit().clear().apply() }
 }

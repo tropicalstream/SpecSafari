@@ -20,8 +20,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class PhoneLink(
     context: Context,
-    private val onFix: (Double, Double, Float) -> Unit,
-    private val onSetting: (String, String) -> Unit = { _, _ -> }
+    private val onFix: (Double, Double, Float, Float) -> Unit,
+    private val onSetting: (String, String) -> Unit = { _, _ -> },
+    private val onConnected: () -> Unit = {},
 ) {
     companion object {
         val BEAM_UUID: UUID = UUID.fromString("8f6a2b58-3c0d-4e2a-9a2e-7c5b9d1f4e21")
@@ -83,9 +84,11 @@ class PhoneLink(
                     connected = true
                     status = "PHONE LINK: $name"
                     Log.d(TAG, "connected to $name")
+                    onConnected()
                     readLoop(s)
                 } catch (t: Throwable) {
                     // Not this device / beam not running there — try the next.
+                    Log.w(TAG, "link to $name ended: ${t.message}", t)
                     runCatching { socket?.close() }
                 } finally {
                     socket = null
@@ -106,7 +109,8 @@ class PhoneLink(
                     s.outputStream.write((line + "\n").toByteArray())
                     s.outputStream.flush()
                 }
-            }
+            }.onSuccess { Log.d(TAG, "sent ${line.take(3)}") }
+                .onFailure { Log.w(TAG, "send ${line.take(3)} failed: ${it.message}") }
         }.start()
     }
 
@@ -121,7 +125,8 @@ class PhoneLink(
                     val lat = parts[1].toDoubleOrNull() ?: continue
                     val lon = parts[2].toDoubleOrNull() ?: continue
                     val acc = parts[3].toFloatOrNull()?.takeIf { it >= 0f } ?: 30f
-                    onFix(lat, lon, acc)
+                    val speed = parts.getOrNull(5)?.toFloatOrNull() ?: -1f
+                    onFix(lat, lon, acc, speed)
                 }
                 line.startsWith("SET ") -> {
                     val parts = line.split(' ')

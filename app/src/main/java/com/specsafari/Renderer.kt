@@ -438,7 +438,7 @@ class Renderer(private val g: GameEngine) {
             } else {
                 c.drawText("LEVEL ${g.resultLevel} JOINS YOUR BOX", cx, h * 0.72f, body)
                 accent.textAlign = Paint.Align.CENTER
-                c.drawText("NEXT HUNT: L${g.spawner.level} AT ${GeoMath.prettyDistance(g.spawner.ladderDistance())}", cx, h * 0.79f, accent)
+            c.drawText("NEXT: L${g.spawner.level} · ~${GeoMath.prettyDistance(g.spawner.ladderDistance())} FROM START", cx, h * 0.79f, accent)
             }
         } else {
             Sprites.creature(c, g.resultSpecies, cx + sin(t * 3f) * 30f, h * 0.42f, 20f, t, excited = true)
@@ -567,7 +567,7 @@ class Renderer(private val g: GameEngine) {
         body.drawScaled(c, "Send L${g.fetchLevel} ${sp.name} to fetch it?", cx, h * 0.68f, w - 24f)
         small.textAlign = Paint.Align.CENTER
         small.color = Color.rgb(255, 220, 90)
-        c.drawText("TAP: SEND  ${bondHeartStr(g.fetchSpecies)}", cx, h * 0.76f, small)
+        c.drawText("TRIPLE-TAP: SEND  ${bondHeartStr(g.fetchSpecies)}", cx, h * 0.76f, small)
         small.color = Color.rgb(180, 220, 245)
         c.drawText("DOUBLE-TAP: OPEN IT YOURSELF", cx, h * 0.83f, small)
     }
