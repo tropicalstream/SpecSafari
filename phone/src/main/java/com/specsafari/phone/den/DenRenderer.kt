@@ -40,6 +40,11 @@ class DenC(val species: Int) {
     var lingerT = 0f
     var under = false          // burrowers: traveling as a molehill
     var underT = 0f
+    // The third dimension: fliers cruise, perchers roost, climbers scale.
+    var alt = 0f               // height above the ground right now
+    var perchT = 0f            // time left sitting on a roost/summit
+    var perchTop = 0f          // the roost's top height
+    var climbing = false       // ascending claw-over-claw, not on the wing
     var meetCd = 0f
     var questT = 0f            // fetch-quest dash: sprint out, dig, sprint home
     var questDir = 1f
@@ -263,9 +268,16 @@ class DenRenderer : GLSurfaceView.Renderer {
     // The bordering ocean: (x, z, radius) discs, tinted per biome, no wading.
     @Volatile private var borderWater: List<FloatArray> = emptyList()
     private val ripples = ArrayList<Ripple>()
-    /** Solid things: x, z, radius. Nobody walks through wood or fire. */
+    /** Solid things: x, z, radius. Nobody walks through wood or fire.
+     *  Foliage (bushes, nooks) is deliberately NOT here — a creature may
+     *  hide inside leaves; it may never stand inside a physically solid
+     *  object. */
     private val obstacles = ArrayList<FloatArray>()
     @Volatile private var obstacleSnapshot: List<FloatArray> = emptyList()
+    /** Roosts and summits a flier can land on / a climber can scale: x, z, topY. */
+    private val perchPts = ArrayList<FloatArray>()
+    // The claw-and-paw club: metal kit, cat, brownie, roost-dreamer, carbuncle.
+    private val climberSpecies = intArrayOf(7, 10, 15, 16, 18)
 
     /** Push a point out of every solid it overlaps; returns corrected x,z. */
     private fun resolve(px: Float, pz: Float, rad: Float): FloatArray {
@@ -952,7 +964,7 @@ class DenRenderer : GLSurfaceView.Renderer {
                     fieldFood.getOrElse(c.species) { 0f },
                     sp.energy, t)
                 Matrix.setIdentityM(model, 0)
-                Matrix.translateM(model, 0, c.x + affect.jitterX, hop, c.z + affect.jitterZ)
+                Matrix.translateM(model, 0, c.x + affect.jitterX, hop + c.alt, c.z + affect.jitterZ)
                 Matrix.rotateM(model, 0, c.headingDeg, 0f, 1f, 0f)
                 if (c.bank != 0f) Matrix.rotateM(model, 0, c.bank, 0f, 0f, 1f)
                 if (affect.pitch != 0f) Matrix.rotateM(model, 0, affect.pitch, 1f, 0f, 0f)
@@ -979,7 +991,7 @@ class DenRenderer : GLSurfaceView.Renderer {
                 AffectDisplay.drawFace(c.species, affect, model, uM, aPos, aNrm, aCol, t, c.phase)
                 if (i == selected) {
                     Matrix.setIdentityM(model, 0)
-                    Matrix.translateM(model, 0, c.x, hop + 1.05f + sin(t * 3f) * 0.05f, c.z)
+                    Matrix.translateM(model, 0, c.x, hop + c.alt + 1.05f + sin(t * 3f) * 0.05f, c.z)
                     Matrix.rotateM(model, 0, t * 90f, 0f, 1f, 0f)
                     Matrix.scaleM(model, 0, 0.16f, 0.16f, 0.16f)
                     glUniformMatrix4fv(uM, 1, false, model, 0)
@@ -1141,7 +1153,9 @@ class DenRenderer : GLSurfaceView.Renderer {
         Matrix.setIdentityM(model, 0)
         Matrix.translateM(model, 0, c.x, 0f, c.z)
         Matrix.rotateM(model, 0, c.headingDeg, 0f, 1f, 0f)   // oblong shadows follow the body
-        Matrix.scaleM(model, 0, c.scale, 1f, c.scale)
+        // The higher the body, the smaller its pool of shade on the ground.
+        val s = c.scale / (1f + c.alt * 0.7f)
+        Matrix.scaleM(model, 0, s, 1f, s)
         glUniformMatrix4fv(uM, 1, false, model, 0)
         shadowMesh?.draw(aPos, aNrm, aCol)
     }
@@ -1185,7 +1199,7 @@ class DenRenderer : GLSurfaceView.Renderer {
         // Gather the elemental furniture: fires, lamps, waters, crystals —
         // and the collision map, so wood and fire are finally solid.
         flamePts.clear(); lanternPts.clear(); sparklePts.clear(); waterBodies.clear()
-        obstacles.clear()
+        obstacles.clear(); perchPts.clear()
         for (zone in Habitats.ZONES) when (zone.kind) {
             "WATER" -> waterBodies += WaterBody(zone.x, zone.z, zone.r, Habitats.isFrozen(zone.x))
             "EMBER" -> for (k in 0..3) {
@@ -1196,20 +1210,30 @@ class DenRenderer : GLSurfaceView.Renderer {
                 obstacles += floatArrayOf(px, pz, 0.3f)          // fire is not a path
             }
             "THICKET" -> {
-                obstacles += floatArrayOf(zone.x - zone.r * 0.5f, zone.z - 0.2f, 0.45f)
-                obstacles += floatArrayOf(zone.x + zone.r * 0.45f, zone.z + 0.15f, 0.4f)
-                obstacles += floatArrayOf(zone.x, zone.z + zone.r * 0.4f, 0.5f)
-                obstacles += floatArrayOf(zone.x - zone.r * 0.15f, zone.z - zone.r * 0.45f, 0.42f)
+                // Only the trunk core is solid; the foliage around it is
+                // concealment a creature may slip into and hide.
+                obstacles += floatArrayOf(zone.x - zone.r * 0.5f, zone.z - 0.2f, 0.2f)
+                obstacles += floatArrayOf(zone.x + zone.r * 0.45f, zone.z + 0.15f, 0.18f)
+                obstacles += floatArrayOf(zone.x, zone.z + zone.r * 0.4f, 0.22f)
+                obstacles += floatArrayOf(zone.x - zone.r * 0.15f, zone.z - zone.r * 0.45f, 0.19f)
+                perchPts += floatArrayOf(zone.x, zone.z + zone.r * 0.4f, 1.6f)
+                perchPts += floatArrayOf(zone.x - zone.r * 0.5f, zone.z - 0.2f, 1.5f)
             }
             "STONE" -> {
                 obstacles += floatArrayOf(zone.x, zone.z, zone.r * 0.6f)
                 obstacles += floatArrayOf(zone.x + zone.r * 0.7f, zone.z - 0.2f, 0.4f)
+                perchPts += floatArrayOf(zone.x, zone.z, 0.75f)
             }
-            "PERCH" -> obstacles += floatArrayOf(zone.x, zone.z, 0.28f)
+            "PERCH" -> {
+                obstacles += floatArrayOf(zone.x, zone.z, 0.28f)
+                perchPts += floatArrayOf(zone.x, zone.z, 1.5f)
+            }
             "VOID" -> for (k in 0..4) {
                 val a = k * 1.257f
                 obstacles += floatArrayOf(zone.x + cos(a) * zone.r * 0.85f,
                     zone.z + sin(a) * zone.r * 0.65f, 0.16f)
+                if (k == 0) perchPts += floatArrayOf(zone.x + zone.r * 0.85f,
+                    zone.z, 1.35f)
             }
         }
         // Solid biome scenery (trunks, cacti, the mesa), data-driven per biome.
@@ -1220,16 +1244,22 @@ class DenRenderer : GLSurfaceView.Renderer {
                 "lantern" -> {
                     lanternPts += floatArrayOf(sx, 1.06f, sz)
                     obstacles += floatArrayOf(sx, sz, 0.22f)
+                    perchPts += floatArrayOf(sx, sz, 1.25f)
                 }
                 "pool" -> waterBodies += WaterBody(sx, sz, 0.6f, Habitats.isFrozen(sx))
                 "gems" -> {
                     sparklePts += floatArrayOf(sx, 0.35f, sz)
                     obstacles += floatArrayOf(sx, sz, 0.35f)
                 }
-                "bush" -> obstacles += floatArrayOf(sx, sz, 0.5f)
-                "nook" -> obstacles += floatArrayOf(sx, sz, 0.5f)
-                "drum" -> obstacles += floatArrayOf(sx, sz, 0.4f)
-                "plinth" -> obstacles += floatArrayOf(sx, sz, 0.3f)
+                // bush + nook: leafy concealment, not solids — hideable.
+                "drum" -> {
+                    obstacles += floatArrayOf(sx, sz, 0.4f)
+                    perchPts += floatArrayOf(sx, sz, 0.85f)
+                }
+                "plinth" -> {
+                    obstacles += floatArrayOf(sx, sz, 0.3f)
+                    perchPts += floatArrayOf(sx, sz, 0.7f)
+                }
             }
         }
         itemMeshes = placedIds.mapIndexedNotNull { i, id ->
@@ -1653,9 +1683,25 @@ class DenRenderer : GLSurfaceView.Renderer {
                             audioEvents.add(intArrayOf(EV_FORAGE, c.species))
                             c.targetX = Float.NaN
                         } else {
-                            if (c.migrating) c.migrationCheckT = .15f
-                            c.targetX = Float.NaN
-                            if (!urgentTarget) c.lingerT = 3f + Random.nextFloat() * 3f
+                            // Arrived beside a roost or summit? Fliers alight,
+                            // climbers scale it claw over claw.
+                            val flier = sp.motion == Species.FLOAT || sp.motion == Species.DRIFT
+                            val roost = if (flier || c.species in climberSpecies)
+                                perchPts.firstOrNull {
+                                    abs(it[0] - c.x) < 0.7f && abs(it[1] - c.z) < 0.7f
+                                } else null
+                            if (roost != null && !c.fleeing && !c.migrating) {
+                                c.perchT = 6f + Random.nextFloat() * 8f
+                                c.perchTop = roost[2]
+                                c.climbing = !flier
+                                c.x = roost[0]; c.z = roost[1]
+                                c.vx = 0f; c.vz = 0f
+                                c.targetX = Float.NaN
+                            } else {
+                                if (c.migrating) c.migrationCheckT = .15f
+                                c.targetX = Float.NaN
+                                if (!urgentTarget) c.lingerT = 3f + Random.nextFloat() * 3f
+                            }
                         }
                     } else if (d >= 0.4f) {
                         val v = (0.5f + sp.energy * 0.7f) * (if (c.under) 2f else 1f) *
@@ -1693,6 +1739,21 @@ class DenRenderer : GLSurfaceView.Renderer {
                                 c.pauseT = 0.8f + Random.nextFloat() * 1.6f
                         }
                     }
+                    // Wings and claws seek the high places: a flier picks a
+                    // roost, a climber something worth scaling.
+                    val highSeeker = sp.motion == Species.FLOAT ||
+                        sp.motion == Species.DRIFT || c.species in climberSpecies
+                    if (highSeeker && c.perchT <= 0f && Random.nextFloat() < dt * 0.05f) {
+                        val p = perchPts.minByOrNull {
+                            val ddx = it[0] - c.x; val ddz = it[1] - c.z; ddx * ddx + ddz * ddz
+                        }
+                        if (p != null) {
+                            val ddx = p[0] - c.x; val ddz = p[1] - c.z
+                            if (ddx * ddx + ddz * ddz < 49f) {
+                                c.targetX = p[0]; c.targetZ = p[1]; c.targetT = 12f
+                            }
+                        }
+                    }
                     if (Random.nextFloat() < dt * 0.12f) {
                         var found = false
                         for ((i, id) in placedIds.withIndex()) {
@@ -1719,7 +1780,7 @@ class DenRenderer : GLSurfaceView.Renderer {
 
                 // Society: evaluate every perceived neighbor, then act on the
                 // strongest alarm, threat, compatible partner, or space conflict.
-                if (!c.sleeping && !c.fleeing && !c.soliciting &&
+                if (!c.sleeping && !c.fleeing && !c.soliciting && c.perchT <= 0f &&
                     !c.foraging && !c.migrating && c.feedingT <= 0f) {
                     var chosen: DenC? = null
                     var chosenResponse: com.specsafari.shared.SocialResponse? = null
@@ -1784,14 +1845,50 @@ class DenRenderer : GLSurfaceView.Renderer {
                     }
                 }
 
+                // The third dimension: fliers lift off when traveling (and to
+                // escape), roosters sit their perch, climbers inch up and down.
+                run {
+                    val flier = sp.motion == Species.FLOAT || sp.motion == Species.DRIFT
+                    if (c.perchT > 0f) {
+                        c.perchT -= dt
+                        c.vx = 0f; c.vz = 0f
+                        c.pauseT = maxOf(c.pauseT, 0.3f)      // no wandering off a roost
+                        if (c.happyT > 0.9f) c.perchT = 0f    // petted: come on down
+                    }
+                    val wantAlt = when {
+                        c.under || c.sleeping || c.feedingT > 0f || c.soliciting -> 0f
+                        c.perchT > 0f -> c.perchTop
+                        flier && c.fleeing -> 1.5f            // escape on the wing
+                        flier && (c.vx * c.vx + c.vz * c.vz) > 0.12f ->
+                            0.85f + sin(c.phase * 1.1f) * 0.25f
+                        else -> 0f
+                    }
+                    // Claws move slower than wings (both up and back down).
+                    val rate = if (c.climbing) 0.7f else 2.2f
+                    c.alt += (wantAlt - c.alt).coerceIn(-rate * dt, rate * dt)
+                    if (c.alt < 0.02f && c.perchT <= 0f) {
+                        c.alt = 0f; c.perchTop = 0f; c.climbing = false
+                    }
+                }
                 c.x = (c.x + c.vx * dt).coerceIn(0.8f, w - 0.8f)
                 c.z = (c.z + c.vz * dt).coerceIn(-8f, 8f)
-                // Solids are solid — unless you're a mole in the underworld.
-                if (!c.under) {
-                    val fixed = resolve(c.x, c.z, eco.bodyRadius * c.scale)
+                // Solids are solid — unless you're a mole in the underworld,
+                // on the wing above them, or sitting on top of one.
+                if (!c.under && c.alt < 0.3f && c.perchT <= 0f) {
+                    val bodyR = eco.bodyRadius * c.scale
+                    val fixed = resolve(c.x, c.z, bodyR)
                     if (fixed[0] != c.x || fixed[1] != c.z) {
                         c.x = fixed[0]; c.z = fixed[1]
                         c.vx *= 0.4f; c.vz *= 0.4f   // bumping into things is humbling
+                    }
+                    // Basic logic: a creature may hide in foliage, never inside
+                    // a physically solid object. If the pushout couldn't escape
+                    // (overlapping trunks, a world-edge pin), step to the
+                    // nearest genuinely clear ground.
+                    if (overlaps(c.x, c.z, bodyR * 0.7f)) {
+                        val fc = findClear(c.x, c.z, bodyR)
+                        c.x = fc[0]; c.z = fc[1]
+                        c.vx = 0f; c.vz = 0f
                     }
                 }
                 // Water physics: a splash going in, bow ripples while moving.
