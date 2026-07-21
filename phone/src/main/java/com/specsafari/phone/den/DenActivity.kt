@@ -81,7 +81,18 @@ class DenActivity : Activity() {
             ?: return
         runCatching {
             val fresh = JSONObject(json)
-            renderer.roster = Roster.decode(fresh.optString("roster"))
+            // Local renames overlay the synced register until the glasses
+            // echo them back; an echoed name clears its overlay.
+            renderer.roster = Roster.decode(fresh.optString("roster")).map { ind ->
+                val pending = prefs.getString("rename_${ind.id}", null)
+                when {
+                    pending == null -> ind
+                    pending == ind.name -> {
+                        prefs.edit().remove("rename_${ind.id}").apply(); ind
+                    }
+                    else -> ind.copy(name = pending)
+                }
+            }
             val prevEss = prefs.getInt("lastDexEssence", -1)
             val newEss = fresh.optInt("essence")
             if (prevEss >= 0 && newEss != prevEss) {
@@ -953,73 +964,145 @@ class DenActivity : Activity() {
     private fun showBiocard(c: DenC) {
         val sp = Species.ALL[c.species]
         val ind = renderer.roster.firstOrNull { it.id == c.indId }
-        val card = LinearLayout(this).apply {
+        val goldDim = Color.rgb(150, 124, 58)
+        val cream = Color.rgb(255, 246, 228)
+
+        // ------------------------------------------------ the card itself
+        // A collectible-deck card: thick gold frame, framed art window with
+        // a name banner over it, a type strip, stat chips, ruled sections,
+        // and italic flavor text at the foot — the TCG anatomy.
+        val inner = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(14), dp(18), dp(18))
-            setBackgroundColor(Color.rgb(16, 22, 30))
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = GradientDrawable().apply {
+                setColor(Color.rgb(18, 24, 33)); cornerRadius = dp(14).toFloat()
+            }
+        }
+        val frame = FrameLayout(this).apply {
+            setPadding(dp(7), dp(7), dp(7), dp(7))
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                intArrayOf(Color.rgb(240, 208, 108), Color.rgb(168, 132, 52), Color.rgb(240, 208, 108))
+            ).apply { cornerRadius = dp(19).toFloat() }
+            addView(inner)
         }
 
-        // Hero portrait — the individual itself, phenotype and all.
-        val portrait = ImageView(this).apply {
-            adjustViewBounds = true
-            scaleType = ImageView.ScaleType.FIT_CENTER
+        // Name banner: given name (tap to rename) + level chip.
+        val banner = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), 0, dp(2), dp(6))
         }
-        card.addView(portrait, LinearLayout.LayoutParams(
-            dp(210), dp(210)).apply { gravity = Gravity.CENTER_HORIZONTAL })
-        MiniStudio.frames(c.species, c.seed) { f ->
-            portrait.setImageBitmap(f[2])   // a three-quarter pose reads best
-        }
-
-        // Identity: the given name largest, the species line beneath.
         val nameView = TextView(this).apply {
-            text = c.indName.ifBlank { sp.name }
-            textSize = 26f; typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
-            setTextColor(Color.rgb(255, 246, 228)); gravity = Gravity.CENTER
+            textSize = 23f; typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
+            setTextColor(cream)
         }
-        card.addView(nameView)
+        fun setNameText() { nameView.text = "${c.indName.ifBlank { sp.name }} ✎" }
+        setNameText()
+        banner.addView(nameView, LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        banner.addView(TextView(this).apply {
+            text = "L${ind?.level ?: 1}"
+            textSize = 14f; typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.rgb(30, 22, 10)); gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                setColor(gold); cornerRadius = dp(14).toFloat()
+            }
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+        })
+        inner.addView(banner)
+
+        // Framed art window.
+        val portrait = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
+        inner.addView(FrameLayout(this).apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.rgb(38, 58, 82), Color.rgb(22, 32, 44))
+            ).apply { cornerRadius = dp(9).toFloat(); setStroke(dp(2), goldDim) }
+            setPadding(dp(6), dp(6), dp(6), dp(6))
+            addView(portrait, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(190)))
+        })
+        MiniStudio.frames(c.species, c.seed) { f -> portrait.setImageBitmap(f[2]) }
+
+        // Type strip + hearts, like the card's type line.
         val pts = dex?.optJSONArray("bonds")?.optInt(c.species) ?: 0
         val hearts = intArrayOf(0, 5, 12, 25, 45, 70).count { pts >= it } - 1
-        card.addView(TextView(this).apply {
-            text = "${sp.name} · the ${sp.temperament.lowercase()} one · " +
-                "♥".repeat(hearts.coerceAtLeast(0)) + "♡".repeat((5 - hearts).coerceAtLeast(0))
-            textSize = 14f; typeface = Typeface.DEFAULT_BOLD
-            setTextColor(gold); gravity = Gravity.CENTER
-            setPadding(0, dp(2), 0, dp(6))
+        inner.addView(TextView(this).apply {
+            text = "${sp.name} · THE ${sp.temperament} ONE"
+            textSize = 12.5f; typeface = Typeface.DEFAULT_BOLD
+            setTextColor(gold); gravity = Gravity.CENTER; letterSpacing = 0.08f
+            setPadding(0, dp(7), 0, 0)
+        })
+        inner.addView(TextView(this).apply {
+            text = "♥".repeat(hearts.coerceAtLeast(0)) + "♡".repeat((5 - hearts).coerceAtLeast(0))
+            textSize = 15f; setTextColor(Color.rgb(255, 150, 190)); gravity = Gravity.CENTER
         })
 
-        fun section(title: String, body: String, accentBody: Boolean = false) {
-            card.addView(TextView(this).apply {
-                text = title; textSize = 12f; typeface = Typeface.DEFAULT_BOLD
-                setTextColor(teal); setPadding(0, dp(10), 0, dp(1))
-                letterSpacing = 0.1f
+        // Stat chips row — at-a-glance vitals, boxed like TCG stats.
+        val rec = field[c.species]
+        val learned = rec.learning()
+        val chipsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, dp(6), 0, dp(2))
+        }
+        fun chip(label: String, value: String) {
+            chipsRow.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                background = GradientDrawable().apply {
+                    setColor(Color.rgb(28, 40, 54)); cornerRadius = dp(8).toFloat()
+                    setStroke(dp(1), goldDim)
+                }
+                setPadding(dp(9), dp(4), dp(9), dp(4))
+                addView(TextView(this@DenActivity).apply {
+                    text = value; textSize = 14f; typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(Color.rgb(150, 236, 255)); gravity = Gravity.CENTER
+                })
+                addView(TextView(this@DenActivity).apply {
+                    text = label; textSize = 9.5f
+                    setTextColor(dim); gravity = Gravity.CENTER; letterSpacing = 0.08f
+                })
+            }, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { leftMargin = dp(3); rightMargin = dp(3) })
+        }
+        chip("HUNGER", "${(c.hunger * 100).toInt()}%")
+        chip("TRUST", "${(learned.familiarity * 100).toInt()}%")
+        chip("FOOD", "${(learned.foodExpectation * 100).toInt()}%")
+        chip("FEAR", "${(learned.fear * 100).toInt()}%")
+        inner.addView(chipsRow)
+
+        fun rule() = inner.addView(View(this).apply {
+            setBackgroundColor(Color.argb(120, 150, 124, 58))
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1))
+            .apply { topMargin = dp(8); bottomMargin = dp(2) })
+
+        fun section(title: String, body: String) {
+            rule()
+            inner.addView(TextView(this).apply {
+                text = title; textSize = 10.5f; typeface = Typeface.DEFAULT_BOLD
+                setTextColor(teal); letterSpacing = 0.12f
+                setPadding(dp(2), dp(4), 0, dp(1))
             })
-            card.addView(TextView(this).apply {
-                text = body; textSize = 13.5f
-                if (accentBody) typeface = Typeface.DEFAULT_BOLD
-                setTextColor(if (accentBody) Color.rgb(150, 236, 255) else parchment)
+            inner.addView(TextView(this).apply {
+                text = body; textSize = 13f; setTextColor(parchment)
+                setPadding(dp(2), 0, 0, 0)
             })
         }
 
-        // Phenotype — what makes this one recognizably itself.
         if (c.seed != 0) section("LINEAGE & MARKS",
             "A ${Roster.coatName(c.seed)}-coated ${sp.name.lowercase()}, " +
                 "${Roster.statureWord(c.seed)}, with ${Roster.markDesc(c.seed)}.")
-
-        // The found-story.
         section("FOUND", if (ind != null)
             "${ind.place}\n${ind.day} · found as L${ind.level}"
-        else "Its record predates the register.")
-
-        // Field science: the species' hard data, worn by this individual.
+        else "Awaiting its first sync with the glasses register.")
         val eco = EcologyModel.of(c.species)
-        val rec = field[c.species]
-        val learned = rec.learning()
         section("FIELD SCIENCE",
             "${sp.niche}\n${eco.morphology}\n" +
                 "Detects at ${"%.1f".format(c.detectionDistance.takeIf { it > 0f } ?: EthoModel.thresholds(c.species, learned).detectionDistance)} m · " +
                 "takes flight at ${"%.1f".format(c.flightDistance.takeIf { it > 0f } ?: EthoModel.thresholds(c.species, learned).flightDistance)} m")
-
-        // Seasonal journeys, from its own travel diary.
         val digest = (prefs.getString("mig_${c.indId}", "") ?: "")
             .split(',').filter { it.isNotBlank() }.reversed().take(6)
             .mapNotNull { e ->
@@ -1027,56 +1110,72 @@ class DenActivity : Activity() {
                 val d = e.substringAfter(':').toLongOrNull() ?: return@mapNotNull null
                 val ago = (System.currentTimeMillis() / 86_400_000L) - d
                 val whenTxt = when {
-                    ago <= 0L -> "today"
-                    ago == 1L -> "yesterday"
-                    else -> "$ago days ago"
+                    ago <= 0L -> "today"; ago == 1L -> "yesterday"; else -> "$ago days ago"
                 }
                 "→ ${Habitats.BIOMES.getOrNull(b)?.name ?: "?"} · $whenTxt"
             }
         section("SEASONAL JOURNEYS", if (digest.isEmpty())
             "No seasonal journeys yet — the seasons will call." else digest.joinToString("\n"))
+        section("FIELD HISTORY",
+            "met ${rec.encounters}× · pet ${rec.pets} · fed ${rec.treats + rec.berries} · " +
+                "startled ${rec.startles}")
 
-        // Condition, live.
-        section("CONDITION",
-            "Hunger ${(c.hunger * 100).toInt()}% · trust ${(learned.familiarity * 100).toInt()}% · " +
-                "food ${(learned.foodExpectation * 100).toInt()}% · fear ${(learned.fear * 100).toInt()}%\n" +
-                "met ${rec.encounters}× · pet ${rec.pets} · fed ${rec.treats + rec.berries} · " +
-                "startled ${rec.startles}", accentBody = true)
+        // Flavor text at the foot, italic serif — the collectible's soul.
+        rule()
+        inner.addView(TextView(this).apply {
+            text = sp.lore.substringBefore(". ") + "."
+            textSize = 12f; typeface = Typeface.create(Typeface.SERIF, Typeface.ITALIC)
+            setTextColor(Color.rgb(196, 186, 164)); gravity = Gravity.CENTER
+            setPadding(dp(6), dp(4), dp(6), 0)
+        })
 
-        val scroll = ScrollView(this).apply { addView(card) }
+        val page = FrameLayout(this).apply {
+            setBackgroundColor(Color.rgb(8, 11, 16))
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            addView(frame)
+        }
         val dlg = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_NoActionBar)
-            .setView(scroll)
+            .setView(ScrollView(this).apply { addView(page) })
             .setPositiveButton("CLOSE", null)
             .setNeutralButton("✎ RENAME", null)
             .create()
         dlg.show()
-        // Neutral button wired after show so the dialog stays open on tap.
-        dlg.getButton(android.app.AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener {
-            if (c.indId == 0L) { hint("THIS ONE PREDATES THE REGISTER."); return@setOnClickListener }
-            if (!LocationBeamService.connected) {
-                Toast.makeText(this, "Link the glasses to rename.", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
+
+        // ------------------------------------------------ renaming
+        // Always available: the new name applies HERE immediately, persists
+        // on the phone, and beams to the glasses now or whenever the link
+        // next comes up (the poll flushes pending renames).
+        fun promptRename() {
             val input = EditText(this).apply {
                 setText(c.indName); setSelection(c.indName.length)
                 filters = arrayOf(android.text.InputFilter.LengthFilter(14))
+                hint = "A name for this ${sp.name.lowercase()}"
             }
             android.app.AlertDialog.Builder(this)
-                .setTitle("A new name")
+                .setTitle("Name this creature")
                 .setView(input)
                 .setPositiveButton("NAME IT") { _, _ ->
                     val name = input.text.toString().trim()
                         .filter { ch -> ch.isLetterOrDigit() || ch == ' ' || ch == '-' }.take(14)
-                    if (name.isNotBlank()) {
-                        LocationBeamService.sendLine("SET rename ${c.indId}:$name")
-                        c.indName = name
-                        nameView.text = name
-                        hint("$name IT IS.")
+                    if (name.isBlank()) return@setPositiveButton
+                    c.indName = name
+                    setNameText()
+                    if (c.indId != 0L) {
+                        prefs.edit().putString("rename_${c.indId}", name).apply()
+                        if (LocationBeamService.connected)
+                            LocationBeamService.sendLine("SET rename ${c.indId}:$name")
+                        Toast.makeText(this, "$name it is.", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(this,
+                            "$name it is — it will join the register on the next glasses sync.",
+                            Toast.LENGTH_LONG).show()
                     }
                 }
                 .setNegativeButton("KEEP", null)
                 .show()
         }
+        nameView.setOnClickListener { promptRename() }
+        dlg.getButton(android.app.AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener { promptRename() }
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
@@ -1149,10 +1248,23 @@ class DenActivity : Activity() {
 
     // ----------------------------------------------------------- pulses
 
+    private var renameFlushMs = 0L
+
     private val poll = object : Runnable {
         override fun run() {
             refreshDex(); updateWallet(); updateShop(); updateInfo(); updateSatchel()
             fetchWeather(); updateEnv()
+            // Pending renames reach the glasses whenever the link is alive.
+            if (LocationBeamService.connected &&
+                System.currentTimeMillis() - renameFlushMs > 10_000
+            ) {
+                renameFlushMs = System.currentTimeMillis()
+                prefs.all.keys.filter { it.startsWith("rename_") }.forEach { k ->
+                    prefs.getString(k, null)?.let {
+                        LocationBeamService.sendLine("SET rename ${k.removePrefix("rename_")}:$it")
+                    }
+                }
+            }
             handler.postDelayed(this, 1500)
         }
     }
