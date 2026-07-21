@@ -568,15 +568,32 @@ class DenActivity : Activity() {
             setPadding(dp(10), 0, dp(10), dp(2))
         }
         col.addView(hintText)
+        // The readout sits over the live 3D world, so on a bright daytime den
+        // plain light text washed out. A translucent dark panel + shadows keep
+        // it legible against any background, and the stats run bold and bright.
         infoName = TextView(this).apply {
-            textSize = 15f; typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
-            setTextColor(parchment); setPadding(dp(12), 0, dp(12), 0)
+            textSize = 16f; typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
+            setTextColor(Color.rgb(255, 246, 228))
+            setShadowLayer(4f, 0f, 1f, Color.argb(230, 0, 0, 0))
+            setPadding(dp(12), dp(7), dp(12), dp(2))
         }
-        col.addView(infoName)
         infoLine = TextView(this).apply {
-            textSize = 12f; setTextColor(dim); setPadding(dp(12), 0, dp(12), dp(6))
+            textSize = 13f; typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.rgb(150, 236, 255))
+            setShadowLayer(4f, 0f, 1f, Color.argb(230, 0, 0, 0))
+            setPadding(dp(12), 0, dp(12), dp(8))
         }
-        col.addView(infoLine)
+        val infoPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply {
+                setColor(Color.argb(155, 8, 14, 20)); cornerRadius = dp(12).toFloat()
+            }
+            addView(infoName)
+            addView(infoLine)
+        }
+        col.addView(infoPanel, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { setMargins(dp(8), 0, dp(8), dp(4)) })
 
         val shelf = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
