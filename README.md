@@ -5,6 +5,8 @@ Your real neighborhood is the realm: real streets, real parks, real
 cafes — renamed by the game into taverns, glades, and waygates — and
 somewhere out there, always, a creature is waiting.
 
+[![Watch the SpecSafari trailer](trailer_thumbnail.png)](SpecSafari_trailer.mp4)
+
 ## The hunt
 
 - **A level 1 creature always waits within 50 m** of wherever you start.
