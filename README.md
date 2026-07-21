@@ -113,15 +113,28 @@ A simulated hunter strolls toward the current target by himself, and
 capture taps always land — it tours the whole loop from a chair. The
 real game (GPS, real timing duel) is unaffected.
 
+## License
+
+GPLv3 — see [LICENSE](LICENSE). This project incorporates a design
+adapted from GPLv3-licensed code (see below and [NOTICE.md](NOTICE.md)),
+which is why the whole repository carries that license rather than a
+permissive one.
+
 ## Credits
 
 - Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright)
   contributors, fetched via the Overpass API.
+- **The minimap** (`render/MapRenderer.kt`, and the matching heading
+  projection in `gl/HologramView.kt`) adapts the on-screen design of the
+  minimap widget in Théophile Gaudin's excellent open
+  [Everyday](https://github.com/TheophileGaudin/Everyday) HUD project —
+  the heading-up rotating disc, the screen-stable forward marker, the
+  road halo styling, the offscreen edge arrow — used here with the
+  author's permission under GPLv3. See [NOTICE.md](NOTICE.md) for the
+  full attribution.
 - The RayNeo X3 compass conventions (geomagnetic rotation vector, optical
   forward axes), the phone-feeds-location architecture, and the RFCOMM
   topology (phone serves, glasses connect to a bonded device's service
-  UUID) come from Théophile Gaudin's excellent open
-  [Everyday](https://github.com/TheophileGaudin/Everyday) HUD project,
-  adopted here with the author's permission. SpecSafari's implementation
-  is fresh, dependency-free code in this suite's house style, on its own
-  service UUID.
+  UUID) are likewise adopted from Everyday, on SpecSafari's own service
+  UUID.
+- Creature voice recordings: see [phone/VOICE_CREDITS.md](phone/VOICE_CREDITS.md).

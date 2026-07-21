@@ -130,7 +130,8 @@ class HologramView(
             val cy = radius + 10f
             val scale = radius / engine.zoomRadius
 
-            // Equirect projection rotated to heading-up (same as MapRenderer).
+            // Equirect projection rotated to heading-up (same as MapRenderer,
+            // which carries the GPLv3 notice for this design — see NOTICE.md).
             val mPerLon = 111320.0 * cos(Math.toRadians(me.lat))
             val hRad = Math.toRadians(engine.heading.toDouble())
             val cosH = cos(hRad).toFloat(); val sinH = sin(hRad).toFloat()

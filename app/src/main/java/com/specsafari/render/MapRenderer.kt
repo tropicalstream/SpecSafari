@@ -1,3 +1,11 @@
+// SPDX-License-Identifier: GPL-3.0-only
+//
+// This file adapts the on-screen design of MapWidget.kt from Théophile
+// Gaudin's Everyday (https://github.com/TheophileGaudin/Everyday):
+// Copyright (C) 2026 Théophile Gaudin <gaudin.theophile@gmail.com>,
+// used here with the author's permission under GPLv3. See NOTICE.md
+// at the repository root for what specifically carried over and what
+// license this project is distributed under as a result.
 package com.specsafari.render
 
 import android.graphics.Canvas
