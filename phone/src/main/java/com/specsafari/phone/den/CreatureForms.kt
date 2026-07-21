@@ -1,6 +1,7 @@
 package com.specsafari.phone.den
 
 import android.graphics.Color
+import com.specsafari.shared.Roster
 import com.specsafari.shared.Species
 
 /**
@@ -34,7 +35,9 @@ object CreatureForms {
     }
 
     /** One species, one charm. Roughly centered, ~1 unit tall. */
-    fun build(species: Int): Mesh {
+    fun build(species: Int): Mesh = builderFor(species).bake()
+
+    private fun builderFor(species: Int): MeshBuilder {
         val sp = Species.ALL[species]
         val m = sp.main; val a = sp.accent
         val b = MeshBuilder()
@@ -306,6 +309,36 @@ object CreatureForms {
                 eyes(b, 0.84f, 0.45f, 0.14f, 0.052f)
             }
             else -> error("No 3D morphology for species index $species")
+        }
+        return b
+    }
+
+    /** An INDIVIDUAL's body: the species morphology wearing its phenotype —
+     *  the coat shade tinted into every vertex, plus its lifelong birthmark.
+     *  Deterministic per seed, so den, portrait, and biocard all agree. */
+    fun build(species: Int, seed: Int): Mesh {
+        if (seed == 0) return build(species)
+        val b = builderFor(species)
+        val t = Roster.coatTint(seed)
+        b.tint(t[0], t[1], t[2])
+        // The birthmark, in a tone that reads against the coat.
+        val body = Species.ALL[species].main
+        val mk = if (Roster.markLight(seed)) android.graphics.Color.rgb(
+            (android.graphics.Color.red(body) + 190).coerceAtMost(255),
+            (android.graphics.Color.green(body) + 190).coerceAtMost(255),
+            (android.graphics.Color.blue(body) + 180).coerceAtMost(255)
+        ) else android.graphics.Color.rgb(
+            android.graphics.Color.red(body) / 3,
+            android.graphics.Color.green(body) / 3,
+            android.graphics.Color.blue(body) / 3
+        )
+        val ang = Roster.markAngle(seed)
+        when (Roster.markKind(seed)) {
+            0 -> b.ellipsoid(kotlin.math.cos(ang) * 0.30f, 0.52f,
+                kotlin.math.sin(ang) * 0.26f, 0.09f, 0.07f, 0.09f, mk, 0.05f, 4, 6)
+            1 -> b.ellipsoid(0.14f, 0.66f, 0.30f, 0.07f, 0.09f, 0.05f, mk, 0.12f, 4, 6)
+            2 -> b.ellipsoid(0f, 0.42f, 0.32f, 0.14f, 0.10f, 0.06f, mk, 0.05f, 4, 6)
+            else -> b.ellipsoid(0.02f, 0.88f, 0.02f, 0.07f, 0.05f, 0.07f, mk, 0.08f, 4, 6)
         }
         return b.bake()
     }

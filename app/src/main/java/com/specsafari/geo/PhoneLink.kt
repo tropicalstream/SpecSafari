@@ -130,7 +130,8 @@ class PhoneLink(
                 }
                 line.startsWith("SET ") -> {
                     val parts = line.split(' ')
-                    if (parts.size >= 3) onSetting(parts[1], parts[2])
+                    // The value is the whole remainder: renames carry spaces.
+                    if (parts.size >= 3) onSetting(parts[1], parts.drop(2).joinToString(" "))
                 }
                 // PING keepalives fall through silently.
             }

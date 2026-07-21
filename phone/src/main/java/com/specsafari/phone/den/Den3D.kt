@@ -121,6 +121,18 @@ class MeshBuilder {
         quad(x0, y0, z0, x1, y0, z0, x1, y0, z1, x0, y0, z1, color, emissive)
     }
 
+    /** Multiply every vertex color so far — the coat-shade of a phenotype.
+     *  (Layout: 10 floats per vertex, rgb at 6..8.) */
+    fun tint(r: Float, g: Float, b: Float) {
+        var i = 6
+        while (i + 2 < v.size) {
+            v[i] = (v[i] * r).coerceIn(0f, 1f)
+            v[i + 1] = (v[i + 1] * g).coerceIn(0f, 1f)
+            v[i + 2] = (v[i + 2] * b).coerceIn(0f, 1f)
+            i += 10
+        }
+    }
+
     fun bake(): Mesh {
         val fb = ByteBuffer.allocateDirect(v.size * 4)
             .order(ByteOrder.nativeOrder()).asFloatBuffer()

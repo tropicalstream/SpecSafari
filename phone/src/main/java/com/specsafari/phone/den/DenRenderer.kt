@@ -51,7 +51,11 @@ class DenC(val species: Int) {
     var bubbleT = 0f           // thought-bubble hearts over the head after a feed
     var bubbleBroken = false   // too frightened to enjoy it: the hearts crack
     var inWater = false        // for the splash on the way in
-    val scale = 0.88f + Random.nextFloat() * 0.24f
+    // Identity: bound from the roster when the register knows this one.
+    var indId = 0L             // individual id (0 = an unregistered extra)
+    var seed = 0               // genome — phenotype derives from it
+    var indName = ""           // its given name
+    var scale = 0.88f + Random.nextFloat() * 0.24f
     // Perception of the human: arousal and the flight response.
     var fleeing = false
     var startleCd = 0f         // refractory period after a flush
@@ -118,6 +122,10 @@ class DenRenderer : GLSurfaceView.Renderer {
 
     @Volatile private var placedIds: List<String> = emptyList()
     @Volatile private var population: List<Int> = emptyList()
+    /** The register of individuals, freshest sync from the glasses. */
+    @Volatile var roster: List<com.specsafari.shared.Individual> = emptyList()
+    /** Seasonal-journey log: (individual id, biome index) as they arrive. */
+    val migrationEvents = java.util.concurrent.ConcurrentLinkedQueue<Pair<Long, Int>>()
     @Volatile private var rebuild = true
     @Volatile var selected = -1
     @Volatile private var glideX = Float.NaN
@@ -252,6 +260,8 @@ class DenRenderer : GLSurfaceView.Renderer {
     private var sceneMesh: Mesh? = null
     private var itemMeshes = listOf<Mesh>()
     private val forms = HashMap<Int, Mesh>()
+    /** Per-INDIVIDUAL bodies (phenotype baked in), keyed by register id. */
+    private val formsInd = HashMap<Long, Mesh>()
     private var shadowMesh: Mesh? = null
     private var nestMesh: Mesh? = null
     private var flameMesh: Mesh? = null
@@ -324,6 +334,11 @@ class DenRenderer : GLSurfaceView.Renderer {
         }
         return floatArrayOf(x, z)
     }
+
+    /** Which of the nine biomes a world-x sits in. */
+    fun biomeIdxAt(x: Float): Int =
+        (x / (Habitats.WORLD_W / Habitats.BIOMES.size)).toInt()
+            .coerceIn(0, Habitats.BIOMES.size - 1)
 
     private fun inHomeHabitat(c: DenC): Boolean {
         val kind = Species.ALL[c.species].zone
@@ -987,7 +1002,10 @@ class DenRenderer : GLSurfaceView.Renderer {
                 val sz = 0.62f * c.scale * affect.stature
                 Matrix.scaleM(model, 0, sz, sz * squash * chew * affect.crouch, sz)
                 glUniformMatrix4fv(uM, 1, false, model, 0)
-                forms.getOrPut(c.species) { CreatureForms.build(c.species) }.draw(aPos, aNrm, aCol)
+                (if (c.seed != 0)
+                    formsInd.getOrPut(c.indId) { CreatureForms.build(c.species, c.seed) }
+                else forms.getOrPut(c.species) { CreatureForms.build(c.species) })
+                    .draw(aPos, aNrm, aCol)
                 AffectDisplay.drawFace(c.species, affect, model, uM, aPos, aNrm, aCol, t, c.phase)
                 if (i == selected) {
                     Matrix.setIdentityM(model, 0)
@@ -1275,7 +1293,17 @@ class DenRenderer : GLSurfaceView.Renderer {
             val want = population
             if (creatures.map { it.species } != want) {
                 creatures.clear()
+                formsInd.clear()
+                // Bind register entries to residents, oldest first, so each
+                // den body wears one individual's name and phenotype.
+                val byS = HashMap<Int, ArrayDeque<com.specsafari.shared.Individual>>()
+                for (ind in roster.sortedBy { it.id })
+                    byS.getOrPut(ind.species) { ArrayDeque() }.add(ind)
                 for ((idx, s) in want.withIndex()) creatures += DenC(s).apply {
+                    byS[s]?.removeFirstOrNull()?.let { ind ->
+                        indId = ind.id; seed = ind.seed; indName = ind.name
+                        scale = com.specsafari.shared.Roster.stature(ind.seed)
+                    }
                     seasonalBiome = SeasonalEcology.targetBiome(s, seasonNow())
                     val home = seasonalHome(s, seasonalBiome, idx + s * 31)
                     nestX = home[0]; nestZ = home[1]
@@ -1346,6 +1374,7 @@ class DenRenderer : GLSurfaceView.Renderer {
                         c.migrating = false
                         c.targetX = Float.NaN
                         ripples += Ripple(c.x, c.z)
+                        if (c.indId != 0L) migrationEvents.add(c.indId to biomeIdxAt(c.x))
                     }
                     continue
                 }
@@ -1698,7 +1727,11 @@ class DenRenderer : GLSurfaceView.Renderer {
                                 c.vx = 0f; c.vz = 0f
                                 c.targetX = Float.NaN
                             } else {
-                                if (c.migrating) c.migrationCheckT = .15f
+                                if (c.migrating) {
+                                    c.migrationCheckT = .15f
+                                    if (c.indId != 0L)
+                                        migrationEvents.add(c.indId to biomeIdxAt(c.x))
+                                }
                                 c.targetX = Float.NaN
                                 if (!urgentTarget) c.lingerT = 3f + Random.nextFloat() * 3f
                             }

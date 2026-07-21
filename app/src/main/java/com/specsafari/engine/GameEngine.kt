@@ -10,6 +10,8 @@ import com.specsafari.geo.OsmRoad
 import com.specsafari.shared.Species
 import com.specsafari.shared.JourneyCodec
 import com.specsafari.shared.JourneyRecord
+import com.specsafari.shared.Individual
+import com.specsafari.shared.Roster
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.LocalDate
@@ -128,6 +130,45 @@ class GameEngine(
     var menuIdx = 0; private set
     var boxScroll = 0; private set
     var box: MutableList<BoxEntry> = mutableListOf(); private set
+
+    // --------------------------------------------------- the roster
+    // Every caught creature is an INDIVIDUAL: named at birth, marked for
+    // life by its seed, remembered by where and when it was found.
+    private var roster: MutableList<Individual> = mutableListOf()
+    private var rosterLoaded = false
+
+    private fun loadRoster() {
+        if (rosterLoaded) return
+        rosterLoaded = true
+        roster = Roster.decode(store.rosterJson)
+        // Backfill: creatures caught before the register existed get born
+        // into it now, so every resident of the box has a name and a story.
+        var changed = false
+        for (s in Species.ALL.indices) {
+            val want = box.count { it.species == s }
+            while (roster.count { it.species == s } < want) {
+                val seed = Random.nextInt(1, Int.MAX_VALUE)
+                roster += Individual(System.currentTimeMillis() + roster.size, s,
+                    box.first { it.species == s }.level, seed, "long ago",
+                    Roster.autoName(seed), "THE EARLY WILDS")
+                changed = true
+            }
+        }
+        if (changed) store.rosterJson = Roster.encode(roster)
+    }
+
+    /** Register a newly-arrived box resident, unless it is a known individual
+     *  coming home (fetch return, reunion) — counts tell the two apart. */
+    private fun bornIfNew(species: Int, level: Int, place: String) {
+        loadRoster()
+        if (roster.count { it.species == species } >= box.count { it.species == species }) return
+        val seed = Random.nextInt(1, Int.MAX_VALUE)
+        roster += Individual(System.currentTimeMillis(), species, level, seed,
+            LocalDate.now().toString(), Roster.autoName(seed), place)
+        store.rosterJson = Roster.encode(roster)
+    }
+
+    fun rosterList(): List<Individual> { loadRoster(); return roster }
     val essence get() = store.essence
     fun tier(track: Int) = store.upgradeTier(track)
 
@@ -680,6 +721,7 @@ class GameEngine(
     private fun recoverLost(c: Spawn) {
         box.add(BoxEntry(c.species, c.level, System.currentTimeMillis() / 1000))
         store.boxJson = dumpBox(box)
+        bornIfNew(c.species, c.level, c.placeName)  // a stranger's rescue still gets a name
         addBond(c.species, 3)                       // a reunion runs deep
         if (!demo && lostOnes().isNotEmpty()) removeLostFirst()
         spawner.clearLostOne()
@@ -758,6 +800,7 @@ class GameEngine(
         if (fetchReturned) {
             box.add(BoxEntry(fetchSpecies, fetchLevel, System.currentTimeMillis() / 1000))
             store.boxJson = dumpBox(box)
+            bornIfNew(fetchSpecies, fetchLevel, lootPlace)  // known ones just come home
             addBond(fetchSpecies, 2)     // a shared adventure deepens the bond
             host.sound(Audio.CATCH)
         } else {
@@ -821,6 +864,7 @@ class GameEngine(
         if (caught && c != null) {
             box.add(BoxEntry(c.species, c.level, System.currentTimeMillis() / 1000))
             store.boxJson = dumpBox(box)
+            bornIfNew(c.species, c.level, c.placeName)
             rememberPoi(c.poiId)
             store.lifetimeCaught = store.lifetimeCaught + 1
             recordFound(c.species)
@@ -1104,6 +1148,8 @@ class GameEngine(
         val journey = journeyRecord()
         sb.append(",\"journeySummary\":").append(JSONObject.quote(journey.summary()))
         sb.append(",\"journeyCode\":").append(JSONObject.quote(JourneyCodec.encode(journey)))
+        loadRoster()
+        sb.append(",\"roster\":").append(JSONObject.quote(Roster.encode(roster)))
         sb.append(",\"tiers\":[").append((0..3).joinToString(",") { tier(it).toString() }).append("]")
         sb.append(",\"counts\":[").append(counts.joinToString(",")).append("]")
         sb.append(",\"best\":[").append(best.joinToString(",")).append("]")
@@ -1157,6 +1203,12 @@ class GameEngine(
                     .minByOrNull { it.value.level }?.index ?: return
                 box.removeAt(idx)
                 store.boxJson = dumpBox(box)
+                // The same rule picks which INDIVIDUAL leaves the register.
+                loadRoster()
+                roster.filter { it.species == s }.minByOrNull { it.level }?.let {
+                    roster.remove(it)
+                    store.rosterJson = Roster.encode(roster)
+                }
                 store.essence = store.essence + 3
                 addBond(s, 2)
                 recordReleased(s)
@@ -1173,10 +1225,23 @@ class GameEngine(
                     }
                 }
             }
+            "rename" -> {
+                // "id:new name" — the biocard's rename, beamed from the phone.
+                val id = value.substringBefore(':').toLongOrNull() ?: return
+                val name = value.substringAfter(':', "").trim()
+                    .filter { it.isLetterOrDigit() || it == ' ' || it == '-' }.take(14)
+                if (name.isBlank()) return
+                loadRoster()
+                val i = roster.indexOfFirst { it.id == id }
+                if (i < 0) return
+                roster[i] = roster[i].copy(name = name)
+                store.rosterJson = Roster.encode(roster)
+            }
             "reset" -> {
                 store.wipe()
                 eco.havens.clear()
                 box = parseBox(store.boxJson)
+                roster.clear(); rosterLoaded = false
                 bondsLoaded = false
                 fieldLoaded = false
                 for (row in fieldDb) { row[0] = 0; row[1] = 0; row[2] = 0; row[3] = 0; row[4] = 9999 }

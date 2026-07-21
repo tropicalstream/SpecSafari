@@ -18,8 +18,10 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.*
 import com.specsafari.phone.LocationBeamService
+import com.specsafari.shared.EcologyModel
 import com.specsafari.shared.EthoModel
 import com.specsafari.shared.ForageKind
+import com.specsafari.shared.Roster
 import com.specsafari.shared.SeasonalEcology
 import com.specsafari.shared.Species
 import com.specsafari.shared.WorldBiome
@@ -56,6 +58,7 @@ class DenActivity : Activity() {
     private var infoLine: TextView? = null
     private var hintText: TextView? = null
     private var freeButton: Button? = null
+    private var biocardBtn: Button? = null
     private var satchelBtn: Button? = null
     private var satchelPanel: HorizontalScrollView? = null
     private var satchelCards: LinearLayout? = null
@@ -78,6 +81,7 @@ class DenActivity : Activity() {
             ?: return
         runCatching {
             val fresh = JSONObject(json)
+            renderer.roster = Roster.decode(fresh.optString("roster"))
             val prevEss = prefs.getInt("lastDexEssence", -1)
             val newEss = fresh.optInt("essence")
             if (prevEss >= 0 && newEss != prevEss) {
@@ -560,6 +564,22 @@ class DenActivity : Activity() {
                 if (renderer.carriedKind >= 0) giveCarried() else confirmRelease()
             }
         }
+        biocardBtn = Button(this).apply {
+            text = "📖 BIOCARD"
+            textSize = 13f; typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.rgb(30, 22, 10))
+            background = GradientDrawable().apply {
+                setColor(gold); cornerRadius = dp(18).toFloat()
+            }
+            setPadding(dp(16), dp(6), dp(16), dp(6))
+            visibility = View.GONE
+            setOnClickListener {
+                renderer.creatures.getOrNull(renderer.selected)?.let { showBiocard(it) }
+            }
+        }
+        freeRow.addView(biocardBtn, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { rightMargin = dp(8) })
         freeRow.addView(freeButton)
         col.addView(freeRow)
 
@@ -857,6 +877,7 @@ class DenActivity : Activity() {
     /** One button, two hats: GIVE the carried food, or SET FREE when empty-handed. */
     private fun refreshGiveButton(c: DenC?) {
         val carrying = renderer.carriedKind >= 0
+        biocardBtn?.visibility = if (c != null) View.VISIBLE else View.GONE
         freeButton?.visibility =
             if (c != null && (carrying || !devMode)) View.VISIBLE else View.GONE
         freeButton?.text = if (carrying) "🍽 GIVE ${kindName(renderer.carriedKind)}" else "🕊 SET FREE"
@@ -879,7 +900,8 @@ class DenActivity : Activity() {
         val pts = bonds?.optInt(c.species) ?: 0
         val caught = dex?.optJSONArray("counts")?.optInt(c.species) ?: 0
         val hearts = intArrayOf(0, 5, 12, 25, 45, 70).count { pts >= it } - 1
-        infoName?.text = "${sp.name}${if (caught > 1) " ×$caught" else ""} · " +
+        val who = if (c.indName.isNotBlank()) "${c.indName} — " else ""
+        infoName?.text = "$who${sp.name}${if (caught > 1) " ×$caught" else ""} · " +
             "the ${sp.temperament.lowercase()} one · " +
             "♥".repeat(hearts.coerceAtLeast(0)) + "♡".repeat((5 - hearts).coerceAtLeast(0))
         val rec = field[c.species]
@@ -922,6 +944,140 @@ class DenActivity : Activity() {
     }
 
     private fun hint(s: String) { hintText?.text = s }
+
+    // ----------------------------------------------------------- biocard
+    // One creature, one card: hero portrait first, the personal name above
+    // everything, at-a-glance vitals, then labeled sections — found-story,
+    // field science, seasonal journeys, condition — so nothing needs hunting.
+
+    private fun showBiocard(c: DenC) {
+        val sp = Species.ALL[c.species]
+        val ind = renderer.roster.firstOrNull { it.id == c.indId }
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(14), dp(18), dp(18))
+            setBackgroundColor(Color.rgb(16, 22, 30))
+        }
+
+        // Hero portrait — the individual itself, phenotype and all.
+        val portrait = ImageView(this).apply {
+            adjustViewBounds = true
+            scaleType = ImageView.ScaleType.FIT_CENTER
+        }
+        card.addView(portrait, LinearLayout.LayoutParams(
+            dp(210), dp(210)).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        MiniStudio.frames(c.species, c.seed) { f ->
+            portrait.setImageBitmap(f[2])   // a three-quarter pose reads best
+        }
+
+        // Identity: the given name largest, the species line beneath.
+        val nameView = TextView(this).apply {
+            text = c.indName.ifBlank { sp.name }
+            textSize = 26f; typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
+            setTextColor(Color.rgb(255, 246, 228)); gravity = Gravity.CENTER
+        }
+        card.addView(nameView)
+        val pts = dex?.optJSONArray("bonds")?.optInt(c.species) ?: 0
+        val hearts = intArrayOf(0, 5, 12, 25, 45, 70).count { pts >= it } - 1
+        card.addView(TextView(this).apply {
+            text = "${sp.name} · the ${sp.temperament.lowercase()} one · " +
+                "♥".repeat(hearts.coerceAtLeast(0)) + "♡".repeat((5 - hearts).coerceAtLeast(0))
+            textSize = 14f; typeface = Typeface.DEFAULT_BOLD
+            setTextColor(gold); gravity = Gravity.CENTER
+            setPadding(0, dp(2), 0, dp(6))
+        })
+
+        fun section(title: String, body: String, accentBody: Boolean = false) {
+            card.addView(TextView(this).apply {
+                text = title; textSize = 12f; typeface = Typeface.DEFAULT_BOLD
+                setTextColor(teal); setPadding(0, dp(10), 0, dp(1))
+                letterSpacing = 0.1f
+            })
+            card.addView(TextView(this).apply {
+                text = body; textSize = 13.5f
+                if (accentBody) typeface = Typeface.DEFAULT_BOLD
+                setTextColor(if (accentBody) Color.rgb(150, 236, 255) else parchment)
+            })
+        }
+
+        // Phenotype — what makes this one recognizably itself.
+        if (c.seed != 0) section("LINEAGE & MARKS",
+            "A ${Roster.coatName(c.seed)}-coated ${sp.name.lowercase()}, " +
+                "${Roster.statureWord(c.seed)}, with ${Roster.markDesc(c.seed)}.")
+
+        // The found-story.
+        section("FOUND", if (ind != null)
+            "${ind.place}\n${ind.day} · found as L${ind.level}"
+        else "Its record predates the register.")
+
+        // Field science: the species' hard data, worn by this individual.
+        val eco = EcologyModel.of(c.species)
+        val rec = field[c.species]
+        val learned = rec.learning()
+        section("FIELD SCIENCE",
+            "${sp.niche}\n${eco.morphology}\n" +
+                "Detects at ${"%.1f".format(c.detectionDistance.takeIf { it > 0f } ?: EthoModel.thresholds(c.species, learned).detectionDistance)} m · " +
+                "takes flight at ${"%.1f".format(c.flightDistance.takeIf { it > 0f } ?: EthoModel.thresholds(c.species, learned).flightDistance)} m")
+
+        // Seasonal journeys, from its own travel diary.
+        val digest = (prefs.getString("mig_${c.indId}", "") ?: "")
+            .split(',').filter { it.isNotBlank() }.reversed().take(6)
+            .mapNotNull { e ->
+                val b = e.substringBefore(':').toIntOrNull() ?: return@mapNotNull null
+                val d = e.substringAfter(':').toLongOrNull() ?: return@mapNotNull null
+                val ago = (System.currentTimeMillis() / 86_400_000L) - d
+                val whenTxt = when {
+                    ago <= 0L -> "today"
+                    ago == 1L -> "yesterday"
+                    else -> "$ago days ago"
+                }
+                "→ ${Habitats.BIOMES.getOrNull(b)?.name ?: "?"} · $whenTxt"
+            }
+        section("SEASONAL JOURNEYS", if (digest.isEmpty())
+            "No seasonal journeys yet — the seasons will call." else digest.joinToString("\n"))
+
+        // Condition, live.
+        section("CONDITION",
+            "Hunger ${(c.hunger * 100).toInt()}% · trust ${(learned.familiarity * 100).toInt()}% · " +
+                "food ${(learned.foodExpectation * 100).toInt()}% · fear ${(learned.fear * 100).toInt()}%\n" +
+                "met ${rec.encounters}× · pet ${rec.pets} · fed ${rec.treats + rec.berries} · " +
+                "startled ${rec.startles}", accentBody = true)
+
+        val scroll = ScrollView(this).apply { addView(card) }
+        val dlg = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_NoActionBar)
+            .setView(scroll)
+            .setPositiveButton("CLOSE", null)
+            .setNeutralButton("✎ RENAME", null)
+            .create()
+        dlg.show()
+        // Neutral button wired after show so the dialog stays open on tap.
+        dlg.getButton(android.app.AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener {
+            if (c.indId == 0L) { hint("THIS ONE PREDATES THE REGISTER."); return@setOnClickListener }
+            if (!LocationBeamService.connected) {
+                Toast.makeText(this, "Link the glasses to rename.", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            val input = EditText(this).apply {
+                setText(c.indName); setSelection(c.indName.length)
+                filters = arrayOf(android.text.InputFilter.LengthFilter(14))
+            }
+            android.app.AlertDialog.Builder(this)
+                .setTitle("A new name")
+                .setView(input)
+                .setPositiveButton("NAME IT") { _, _ ->
+                    val name = input.text.toString().trim()
+                        .filter { ch -> ch.isLetterOrDigit() || ch == ' ' || ch == '-' }.take(14)
+                    if (name.isNotBlank()) {
+                        LocationBeamService.sendLine("SET rename ${c.indId}:$name")
+                        c.indName = name
+                        nameView.text = name
+                        hint("$name IT IS.")
+                    }
+                }
+                .setNegativeButton("KEEP", null)
+                .show()
+        }
+    }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -1008,6 +1164,19 @@ class DenActivity : Activity() {
             audio?.setPrecip(renderer.precipRain, renderer.precipSnow)
             drainBehavior()
             drainBeamEvents()
+            // The register's travel diary: seasonal arrivals, per individual.
+            while (true) {
+                val mv = renderer.migrationEvents.poll() ?: break
+                val key = "mig_${mv.first}"
+                val day = (System.currentTimeMillis() / 86_400_000L).toString()
+                val prior = prefs.getString(key, "") ?: ""
+                val entry = "${mv.second}:$day"
+                if (!prior.endsWith(entry)) {
+                    val trimmed = (prior.split(',').filter { it.isNotBlank() } + entry)
+                        .takeLast(8).joinToString(",")
+                    prefs.edit().putString(key, trimmed).apply()
+                }
+            }
             drainItemEvents()
             while (true) {
                 val ev = renderer.audioEvents.poll() ?: break

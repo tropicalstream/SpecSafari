@@ -23,21 +23,31 @@ object MiniStudio {
     private const val SIZE = 176
     const val FRAME_MS = 130L
 
-    private val cache = HashMap<Int, Array<Bitmap>>()
-    private val pending = HashSet<Int>()
-    private val waiters = HashMap<Int, MutableList<(Array<Bitmap>) -> Unit>>()
+    // Jobs are keyed (species, seed) so an INDIVIDUAL's portrait — phenotype
+    // and all — renders through the same studio as the species turntables.
+    private val cache = HashMap<Long, Array<Bitmap>>()
+    private val pending = HashSet<Long>()
+    private val waiters = HashMap<Long, MutableList<(Array<Bitmap>) -> Unit>>()
     private val lock = Any()
-    private val queue = java.util.concurrent.LinkedBlockingQueue<Int>()
+    private val queue = java.util.concurrent.LinkedBlockingQueue<Long>()
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var started = false
 
+    private fun key(species: Int, seed: Int) =
+        (species.toLong() shl 32) or (seed.toLong() and 0xFFFFFFFFL)
+
     /** Deliver the turntable for a species (cached, else rendered soon). */
-    fun frames(species: Int, onReady: (Array<Bitmap>) -> Unit) {
+    fun frames(species: Int, onReady: (Array<Bitmap>) -> Unit) =
+        frames(species, 0, onReady)
+
+    /** The same turntable wearing one individual's phenotype. */
+    fun frames(species: Int, seed: Int, onReady: (Array<Bitmap>) -> Unit) {
+        val k = key(species, seed)
         synchronized(lock) {
-            cache[species]?.let { f -> main.post { onReady(f) }; return }
-            waiters.getOrPut(species) { ArrayList() }.add(onReady)
-            if (!pending.add(species)) return
-            queue.add(species)
+            cache[k]?.let { f -> main.post { onReady(f) }; return }
+            waiters.getOrPut(k) { ArrayList() }.add(onReady)
+            if (!pending.add(k)) return
+            queue.add(k)
             if (!started) {
                 started = true
                 Thread({ studioLoop() }, "MiniStudio").apply { isDaemon = true }.start()
@@ -80,8 +90,10 @@ object MiniStudio {
         Matrix.multiplyMM(vp, 0, proj, 0, view, 0)
 
         while (true) {
-            val species = queue.take()
-            val mesh = runCatching { CreatureForms.build(species) }.getOrNull() ?: continue
+            val jobKey = queue.take()
+            val species = (jobKey ushr 32).toInt()
+            val seed = jobKey.toInt()
+            val mesh = runCatching { CreatureForms.build(species, seed) }.getOrNull() ?: continue
             val frames = Array(FRAMES) { k ->
                 glViewport(0, 0, SIZE, SIZE)
                 glClearColor(0f, 0f, 0f, 0f)
@@ -112,9 +124,9 @@ object MiniStudio {
                 grab()
             }
             synchronized(lock) {
-                cache[species] = frames
-                pending.remove(species)
-                val ready = waiters.remove(species)
+                cache[jobKey] = frames
+                pending.remove(jobKey)
+                val ready = waiters.remove(jobKey)
                 if (ready != null) main.post { for (cb in ready) cb(frames) }
             }
         }

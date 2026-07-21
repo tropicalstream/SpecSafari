@@ -74,6 +74,11 @@ class SettingsStore(context: Context) {
         get() = p.getString("box", "[]") ?: "[]"
         set(v) { p.edit().putString("box", v).apply() }
 
+    /** The register of INDIVIDUALS — names, seeds, and where each was found. */
+    var rosterJson: String
+        get() = p.getString("roster", "") ?: ""
+        set(v) { p.edit().putString("roster", v).apply() }
+
     var lifetimeCaught: Int
         get() = p.getInt("lifeCaught", 0)
         set(v) { p.edit().putInt("lifeCaught", v).apply() }
