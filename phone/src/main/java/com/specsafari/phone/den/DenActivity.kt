@@ -956,6 +956,42 @@ class DenActivity : Activity() {
 
     private fun hint(s: String) { hintText?.text = s }
 
+    // A brief confirmation that speaks, then bows out on its own. Unlike Toast
+    // (fixed ~2 s duration, and its own window that can linger over a screen
+    // that's already moved on), this lives inside the given window — so it sits
+    // ABOVE a modal card rather than behind it — and self-clears after 6 s.
+    private var popupView: TextView? = null
+    private val popupHide = Runnable {
+        popupView?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        popupView = null
+    }
+    private fun flashPopup(host: ViewGroup, msg: String) {
+        handler.removeCallbacks(popupHide)
+        popupView?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        val tv = TextView(this).apply {
+            text = msg
+            setTextColor(parchment)
+            textSize = 15f
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(40, 24, 40, 24)
+            background = GradientDrawable().apply {
+                cornerRadius = 28f
+                setColor(Color.argb(238, 16, 24, 34))
+                setStroke(2, gold)
+            }
+        }
+        val lp = FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            bottomMargin = 150
+        }
+        host.addView(tv, lp)
+        popupView = tv
+        handler.postDelayed(popupHide, 6000L)
+    }
+
     // ----------------------------------------------------------- biocard
     // One creature, one card: hero portrait first, the personal name above
     // everything, at-a-glance vitals, then labeled sections — found-story,
@@ -1160,15 +1196,18 @@ class DenActivity : Activity() {
                     if (name.isBlank()) return@setPositiveButton
                     c.indName = name
                     setNameText()
+                    val host = dlg.window?.decorView as? ViewGroup
                     if (c.indId != 0L) {
                         prefs.edit().putString("rename_${c.indId}", name).apply()
                         if (LocationBeamService.connected)
                             LocationBeamService.sendLine("SET rename ${c.indId}:$name")
-                        Toast.makeText(this, "$name it is.", Toast.LENGTH_SHORT).show()
+                        val msg = "$name it is."
+                        if (host != null) flashPopup(host, msg)
+                        else Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
                     } else {
-                        Toast.makeText(this,
-                            "$name it is — it will join the register on the next glasses sync.",
-                            Toast.LENGTH_LONG).show()
+                        val msg = "$name it is — it will join the register on the next glasses sync."
+                        if (host != null) flashPopup(host, msg)
+                        else Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
                     }
                 }
                 .setNegativeButton("KEEP", null)
