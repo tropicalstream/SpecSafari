@@ -87,6 +87,11 @@ class Spawner(private var rng: Random) {
 
     val wildlife = mutableListOf<Spawn>()   // flanking spokes of the umbrella
     private var level1Realigned = false
+    // True only when the current quarry was dropped with NO map data yet — the
+    // one case the re-anchor should upgrade. A fallback chosen WITH data present
+    // (nothing fit the ring+cone) is a considered placement, not a blind one, so
+    // it must be left alone instead of re-rolled to a new species every tick.
+    private var creatureBlind = false
 
     /** A creature away on a failed fetch, out there to be found and welcomed
      *  home. At most one is on the map at a time (the oldest lost). */
@@ -109,6 +114,7 @@ class Spawner(private var rng: Random) {
         usedPois.addAll(recentlyUsed)
         lastSpawnBearing = Float.NaN
         level1Realigned = false
+        creatureBlind = false
     }
 
     /** Ladder distance for a level: 50, 100, 200, 400 ... meters from origin. */
@@ -145,12 +151,12 @@ class Spawner(private var rng: Random) {
         val org = origin ?: return false
         var placed = false
         // A creature dropped blind (before map data arrived) re-anchors to a
-        // real place as soon as the charts come in.
-        creature?.let { c ->
-            if (c.poiId == 0L && c.placeName == "THE OPEN WILDS" &&
-                (pois.isNotEmpty() || roads.isNotEmpty())
-            ) creature = null
-        }
+        // real place as soon as the charts come in — but ONLY a truly blind one.
+        // A fallback the placer chose deliberately (data present, nothing fit
+        // the ring+cone) is left as-is; re-nulling it here re-rolled its species
+        // every tick, which read on the minimap as a creature flickering into a
+        // different creature.
+        if (creatureBlind && (pois.isNotEmpty() || roads.isNotEmpty())) creature = null
         // Level 1 realign: the opening quarry is placed before the hunter has
         // a travel bearing. Once they've shown a direction, a still-distant
         // level-1 lair sitting BEHIND them relocates ahead — once.
@@ -167,6 +173,10 @@ class Spawner(private var rng: Random) {
         if (creature == null) {
             creature = placeCreature(org, player, travelBearing, roads, pois, charmTier)
             placed = creature != null
+            // Blind only if we truly had no charts when we dropped it. With data
+            // in hand, a poiId==0 result is a deliberate fallback, not blind, so
+            // it won't be re-nulled (and re-rolled) on later ticks.
+            creatureBlind = placed && roads.isEmpty() && pois.isEmpty()
         }
         // Interest guarantee: a chest is always waiting in SOME direction —
         // the umbrella's other rib when the creature pulls one way.
