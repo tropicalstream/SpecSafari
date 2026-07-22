@@ -42,7 +42,8 @@ data class HumanPerceptionContext(
     val rain: Boolean = false,
     val wind: Float = 0f,
     val visualOccluded: Boolean = false,
-    val nearbyConspecifics: Int = 0
+    val nearbyConspecifics: Int = 0,
+    val humanOfferingFood: Boolean = false   // food visibly in hand, right now
 )
 
 data class InteractionThresholds(
@@ -201,7 +202,14 @@ object EthoModel {
         fid *= 1f + learning.fear * .55f
         fid *= 1f - (learning.habituation * e.habituationRate * .50f).coerceAtMost(.60f)
 
-        val conditioned = (learning.foodExpectation *
+        // Food visibly in hand is a lure acting NOW, on top of any learned
+        // expectation of being fed. It's a strong signal, but it still runs the
+        // same gauntlet below — a creature with low food drive, high fear, or a
+        // stranger's wariness discounts the offer just as it would a memory, so
+        // stats that would keep it away still keep it away.
+        val offer = if (c.humanOfferingFood) .92f else 0f
+        val foodSignal = max(learning.foodExpectation, offer)
+        val conditioned = (foodSignal *
             (.42f + learning.familiarity * .58f) *
             (.54f + e.foodDrive * .46f) *
             (1f - learning.fear * .78f)).coerceIn(0f, 1f)

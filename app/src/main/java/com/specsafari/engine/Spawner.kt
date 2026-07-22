@@ -26,7 +26,7 @@ class Spawn(
  * placed in the general direction the hunter is already walking, anchored
  * to a real place from the map wherever one exists.
  */
-class Spawner(private val rng: Random) {
+class Spawner(private var rng: Random) {
 
     var origin: GeoPoint? = null; private set
     var level = 1; private set
@@ -92,7 +92,11 @@ class Spawner(private val rng: Random) {
      *  home. At most one is on the map at a time (the oldest lost). */
     var lostOne: Spawn? = null; private set
 
-    fun beginSession(start: GeoPoint, recentlyUsed: Set<Long> = emptySet()) {
+    fun beginSession(start: GeoPoint, seed: Long, recentlyUsed: Set<Long> = emptySet()) {
+        // Reseed deterministically: given the same origin+seed, this session
+        // lays out the identical ladder, so restarting the app in the same spot
+        // reproduces the same spawn rather than re-rolling for a nicer one.
+        rng = Random(seed)
         origin = start
         level = 1
         creature = null

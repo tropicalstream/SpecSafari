@@ -71,6 +71,26 @@ class EthoModelTest {
         assertTrue(milestones.all { it in 2..20 })
     }
 
+    @Test fun foodInHandLuresTheEligibleButStatBlockedStayAway() {
+        // Food visibly in hand is a present lure. A food-driven, low-wariness
+        // creature (Leafling, #0) commits to approach on a first, calm meeting —
+        // no prior conditioning needed — whereas empty-handed it does not.
+        val empty = HumanPerceptionContext(humanOfferingFood = false)
+        val offering = HumanPerceptionContext(humanOfferingFood = true)
+        assertFalse(EthoModel.thresholds(0, LearningState(), empty).approachReady)
+        assertTrue(EthoModel.thresholds(0, LearningState(), offering).approachReady)
+
+        // But stats that would keep a creature away still keep it away: the
+        // Shadepaw (#10, aloof — high neophobia, low food drive) is unmoved by a
+        // stranger's offer on a fresh encounter. It has to be won over first.
+        assertFalse(EthoModel.thresholds(10, LearningState(), offering).approachReady)
+
+        // The offer is a discount on fear, not an override of it: a frightened
+        // creature refuses the same food a calm one would take.
+        val scared = EthoModel.learningState(0, 0, 0, 8, 1)
+        assertFalse(EthoModel.thresholds(0, scared, offering).approachReady)
+    }
+
     @Test fun interactionReachIsMorphologyBounded() {
         Species.ALL.indices.forEach { species ->
             val t = EthoModel.thresholds(species)

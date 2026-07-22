@@ -57,7 +57,7 @@ class DenActivity : Activity() {
     private var infoName: TextView? = null
     private var infoLine: TextView? = null
     private var hintText: TextView? = null
-    private var freeButton: Button? = null
+    private var giveButton: Button? = null
     private var biocardBtn: Button? = null
     private var satchelBtn: Button? = null
     private var satchelPanel: HorizontalScrollView? = null
@@ -538,11 +538,6 @@ class DenActivity : Activity() {
             addView(satchelCards)
         }
         col.addView(satchelPanel)
-        val satchelBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.END
-            setPadding(0, 0, dp(12), dp(4))
-        }
         satchelBtn = Button(this).apply {
             textSize = 13f; typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.rgb(30, 22, 10))
@@ -552,28 +547,25 @@ class DenActivity : Activity() {
             setPadding(dp(16), dp(6), dp(16), dp(6))
             setOnClickListener { onSatchelTap() }
         }
-        satchelBar.addView(satchelBtn)
-        col.addView(satchelBar)
 
-        // SET FREE — visible only when someone is chosen.
+        // GIVE — a field gesture, shown only when a creature is chosen AND
+        // there's food in hand to offer. Setting one free is a lifecycle choice
+        // about that individual, so it lives on the biocard now, not here.
         val freeRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.END
             setPadding(0, 0, dp(12), dp(4))
         }
-        freeButton = Button(this).apply {
-            text = "🕊 SET FREE"
+        giveButton = Button(this).apply {
+            text = "🍽 GIVE"
             textSize = 13f; typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.rgb(10, 24, 18))
             background = GradientDrawable().apply {
-                setColor(teal); cornerRadius = dp(18).toFloat()
+                setColor(Color.rgb(255, 170, 120)); cornerRadius = dp(18).toFloat()
             }
             setPadding(dp(16), dp(6), dp(16), dp(6))
             visibility = View.GONE
-            // With food in hand this button IS the offer; empty-handed, the farewell.
-            setOnClickListener {
-                if (renderer.carriedKind >= 0) giveCarried() else confirmRelease()
-            }
+            setOnClickListener { giveCarried() }
         }
         biocardBtn = Button(this).apply {
             text = "📖 BIOCARD"
@@ -588,10 +580,14 @@ class DenActivity : Activity() {
                 renderer.creatures.getOrNull(renderer.selected)?.let { showBiocard(it) }
             }
         }
+        // Satchel sits leftmost, then biocard, then the give offer.
+        freeRow.addView(satchelBtn, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { rightMargin = dp(8) })
         freeRow.addView(biocardBtn, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { rightMargin = dp(8) })
-        freeRow.addView(freeButton)
+        freeRow.addView(giveButton)
         col.addView(freeRow)
 
         hintText = TextView(this).apply {
@@ -787,10 +783,13 @@ class DenActivity : Activity() {
                     val enjoyed = ev.getOrElse(3) { 1 } == 1
                     when (kind) {
                         DenRenderer.KIND_BERRY -> {
-                            // Only bank the spend if the glasses heard it — an
-                            // unlinked den never drifts from the real satchel.
-                            if (LocationBeamService.sendLine("SET berry 1"))
-                                prefs.edit().putInt("berrySpent", berryOverlay() + 1).apply()
+                            // Bank the spend locally the moment it's eaten, so the
+                            // count actually drops and holds — otherwise, unlinked,
+                            // it flickered to −1 then sprang back as the berry landed.
+                            // Tell the glasses too; when they later confirm the lower
+                            // count, the DEX reconciliation retires this overlay.
+                            prefs.edit().putInt("berrySpent", berryOverlay() + 1).apply()
+                            LocationBeamService.sendLine("SET berry 1")
                             pushBond(species, 3); field.recordBerry(species)
                         }
                         DenRenderer.KIND_HONEY -> {
@@ -840,23 +839,30 @@ class DenActivity : Activity() {
 
     // ----------------------------------------------------------- release
 
-    private fun confirmRelease() {
-        val c = renderer.creatures.getOrNull(renderer.selected) ?: return
+    /** Farewell for one individual — invoked from its biocard. Guard feedback
+     *  routes to `host` (the card's own window) so it isn't swallowed behind
+     *  the modal; `onDone` lets the card dismiss itself after the parting. */
+    private fun confirmRelease(c: DenC, host: ViewGroup?, onDone: () -> Unit) {
         val sp = Species.ALL[c.species]
-        if (devMode) { hint("DEV CREATURES ARE ONLY VISITING"); return }
-        if (!LocationBeamService.connected) { hint("LINK THE GLASSES TO SET FREE"); return }
+        val flash = { msg: String ->
+            if (host != null) flashPopup(host, msg)
+            else Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+        }
+        if (devMode) { flash("Dev creatures are only visiting."); return }
+        if (!LocationBeamService.connected) { flash("Link the glasses to set it free."); return }
         android.app.AlertDialog.Builder(this)
-            .setTitle("Set ${sp.name} free?")
+            .setTitle("Set ${c.indName.ifBlank { sp.name }} free?")
             .setMessage(
                 "It returns to the wild places it came from — ${sp.habitat.lowercase()}. " +
                     "One leaves your box; it leaves 3 essence in parting, and its kind " +
                     "will remember you fondly.")
             .setPositiveButton("SET FREE") { _, _ ->
                 LocationBeamService.sendLine("SET release ${c.species}")
-                val sel = renderer.selected
-                renderer.release(sel)
+                val sel = renderer.creatures.indexOf(c)
+                if (sel >= 0) renderer.release(sel)
                 audio?.voice(c.species, 4)
-                freeButton?.visibility = View.GONE
+                onDone()
+                updateInfo()
                 hint("${sp.name} RUNS FOR THE HORIZON. WALK YOUR STREETS — IT'S OUT THERE.")
             }
             .setNegativeButton("STAY A WHILE", null)
@@ -885,15 +891,14 @@ class DenActivity : Activity() {
         }
     }
 
-    /** One button, two hats: GIVE the carried food, or SET FREE when empty-handed. */
+    /** GIVE the carried food to the chosen creature — shown only with food in
+     *  hand. (Setting free moved to the biocard.) The biocard button rides
+     *  alongside whenever a creature is selected. */
     private fun refreshGiveButton(c: DenC?) {
         val carrying = renderer.carriedKind >= 0
         biocardBtn?.visibility = if (c != null) View.VISIBLE else View.GONE
-        freeButton?.visibility =
-            if (c != null && (carrying || !devMode)) View.VISIBLE else View.GONE
-        freeButton?.text = if (carrying) "🍽 GIVE ${kindName(renderer.carriedKind)}" else "🕊 SET FREE"
-        (freeButton?.background as? GradientDrawable)?.setColor(
-            if (carrying) Color.rgb(255, 170, 120) else teal)
+        giveButton?.visibility = if (c != null && carrying) View.VISIBLE else View.GONE
+        giveButton?.text = if (carrying) "🍽 GIVE ${kindName(renderer.carriedKind)}" else "🍽 GIVE"
     }
 
     private fun updateInfo() {
@@ -1170,12 +1175,19 @@ class DenActivity : Activity() {
             setPadding(dp(12), dp(12), dp(12), dp(12))
             addView(frame)
         }
-        val dlg = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_NoActionBar)
+        // Dev-only visitors can't be freed; nor can one already bound for the
+        // horizon. Everyone else gets the farewell button, right on the card.
+        val canFree = !devMode && !c.releasing
+        val builder = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_NoActionBar)
             .setView(ScrollView(this).apply { addView(page) })
             .setPositiveButton("CLOSE", null)
             .setNeutralButton("✎ RENAME", null)
-            .create()
+        if (canFree) builder.setNegativeButton("🕊 SET FREE", null)
+        val dlg = builder.create()
         dlg.show()
+        if (canFree) dlg.getButton(android.app.AlertDialog.BUTTON_NEGATIVE)?.setOnClickListener {
+            confirmRelease(c, dlg.window?.decorView as? ViewGroup) { dlg.dismiss() }
+        }
 
         // ------------------------------------------------ renaming
         // Always available: the new name applies HERE immediately, persists

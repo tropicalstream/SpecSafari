@@ -259,6 +259,34 @@ class GameEngine(
         switch(State.TITLE)
     }
 
+    /**
+     * The origin + RNG seed for a session beginning at [p]. Restarting the app
+     * in the same place on the same day returns the SAME pair, so the level-1
+     * quarry (and the whole ladder) is reproduced rather than re-rolled — you
+     * can't close the app and reopen it to fish for a closer or rarer spawn.
+     * A genuine move (>60 m) or a new day mints a fresh hunt. The desk demo is
+     * never pinned; it stays a fresh tour each time.
+     */
+    private fun sessionAnchor(p: GeoPoint): Pair<GeoPoint, Long> {
+        if (demo) return p to (System.nanoTime() or 1L)
+        val today = LocalDate.now().toString()
+        val savedSeed = store.sessionSeed
+        if (savedSeed != 0L && store.sessionDay == today) {
+            val parts = store.sessionOrigin.split(',')
+            val savedLat = parts.getOrNull(0)?.toDoubleOrNull()
+            val savedLon = parts.getOrNull(1)?.toDoubleOrNull()
+            if (savedLat != null && savedLon != null) {
+                val savedOrigin = GeoPoint(savedLat, savedLon)
+                if (GeoMath.distanceM(p, savedOrigin) <= 60f) return savedOrigin to savedSeed
+            }
+        }
+        val seed = System.nanoTime() or 1L
+        store.sessionSeed = seed
+        store.sessionOrigin = "${p.lat},${p.lon}"
+        store.sessionDay = today
+        return p to seed
+    }
+
     // ------------------------------------------------------------- inputs
 
     var sessionWalkedM = 0f; private set
@@ -348,8 +376,9 @@ class GameEngine(
                 player?.let { p ->
                     osm.ensureAround(p)
                     if (stateT > 1.2f) {
-                        spawner.beginSession(p, recentPoiIds())
-                        spawner.ensure(p, travelBearing, roads, pois, tier(UPG_CHARM))
+                        val (origin, seed) = sessionAnchor(p)
+                        spawner.beginSession(origin, seed, recentPoiIds())
+                        spawner.ensure(origin, travelBearing, roads, pois, tier(UPG_CHARM))
                         if (demo) {
                             // The desk demo tours everything: plant a cache close
                             // enough to reach in a few strides.

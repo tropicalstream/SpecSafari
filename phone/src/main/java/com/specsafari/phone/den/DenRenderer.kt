@@ -1509,7 +1509,8 @@ class DenRenderer : GLSurfaceView.Renderer {
                     rain = raining || snowing,
                     wind = (windKmh / 30f).coerceIn(0f, 1.5f),
                     visualOccluded = sightOccluded(c.x, c.z, camPX, camPZ),
-                    nearbyConspecifics = kin
+                    nearbyConspecifics = kin,
+                    humanOfferingFood = carriedKind >= 0
                 )
                 val learned = learningFor(c.species)
                 val limits = EthoModel.thresholds(c.species, learned, context)
@@ -1588,6 +1589,20 @@ class DenRenderer : GLSurfaceView.Renderer {
                         c.targetX = camPX.coerceIn(.8f, w - .8f)
                         c.targetZ = camPZ.coerceIn(-8f, 8f); c.targetT = 5f
                     }
+                }
+                // Food in hand, but too wary to come: still a positive beat.
+                // A creature that registers the offer at all (some food interest
+                // survived its own caution) turns to face it and brightens, even
+                // if its stats keep it from closing the distance.
+                if (carriedKind >= 0 && c.aware && !c.fleeing && !c.soliciting &&
+                    !c.alert && response != PlayerResponse.APPROACH &&
+                    limits.conditionedApproach > .05f
+                ) {
+                    val desired = Math.toDegrees(
+                        kotlin.math.atan2((-dxp).toDouble(), (-dzp).toDouble())).toFloat()
+                    val d = ((desired - c.headingDeg + 540f) % 360f) - 180f
+                    c.headingDeg = (c.headingDeg + d.coerceIn(-90f * dt, 90f * dt) + 360f) % 360f
+                    c.happyT = maxOf(c.happyT, .7f)
                 }
                 if (!c.fleeing && distP < 2f && c.closeCd <= 0f) {
                     behaviorEvents.add(intArrayOf(BEV_CLOSE, c.species, (distP * 100f).toInt()))

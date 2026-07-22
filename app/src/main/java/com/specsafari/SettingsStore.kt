@@ -124,6 +124,22 @@ class SettingsStore(context: Context) {
         get() = p.getString("havens", "") ?: ""
         set(v) { p.edit().putString("havens", v).apply() }
 
+    // ---- Session anchor: pins the current hunt's origin + RNG seed so that
+    // restarting the app in the same place on the same day reproduces the very
+    // same spawn instead of re-rolling a fresh one nearby (anti-restart-reroll).
+    var sessionSeed: Long
+        get() = p.getLong("sessSeed", 0L)
+        set(v) { p.edit().putLong("sessSeed", v).apply() }
+
+    /** Origin of the pinned session as "lat,lon" (empty = none). */
+    var sessionOrigin: String
+        get() = p.getString("sessOrigin", "") ?: ""
+        set(v) { p.edit().putString("sessOrigin", v).apply() }
+
+    var sessionDay: String
+        get() = p.getString("sessDay", "") ?: ""
+        set(v) { p.edit().putString("sessDay", v).apply() }
+
     // --------------------------------------------------------- daily journey
 
     var journeyDay: String
